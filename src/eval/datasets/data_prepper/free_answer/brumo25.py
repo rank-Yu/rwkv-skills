@@ -5,7 +5,7 @@ from typing import List
 from collections.abc import Iterator
 
 from ..data_utils import iter_hf_dataset, write_jsonl
-from src.dataset.data_prepper.prepper_registry import FREE_ANSWER_REGISTRY
+from src.eval.datasets.data_prepper.prepper_registry import FREE_ANSWER_REGISTRY
 
 
 def _records() -> Iterator[dict]:

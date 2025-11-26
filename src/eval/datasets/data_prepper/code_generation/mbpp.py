@@ -7,7 +7,7 @@ from typing import Iterable, Mapping
 from evalplus.data import get_mbpp_plus
 
 from ..data_utils import write_jsonl
-from src.dataset.data_prepper.prepper_registry import CODE_GENERATION_REGISTRY
+from src.eval.datasets.data_prepper.prepper_registry import CODE_GENERATION_REGISTRY
 
 _QUESTION_REPLACE = ("    ", "\t")
 

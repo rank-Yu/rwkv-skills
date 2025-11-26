@@ -5,7 +5,7 @@ from typing import Dict, List
 from collections.abc import Iterable
 
 from ..data_utils import dataset_cache_dir, download_file, read_jsonl, write_jsonl
-from src.dataset.data_prepper.prepper_registry import INSTRUCTION_FOLLOWING_REGISTRY
+from src.eval.datasets.data_prepper.prepper_registry import INSTRUCTION_FOLLOWING_REGISTRY
 
 QUESTIONS_URL = "https://raw.githubusercontent.com/lm-sys/arena-hard-auto/main/data/arena-hard-v0.1/question.jsonl"
 BASELINE_URL = (

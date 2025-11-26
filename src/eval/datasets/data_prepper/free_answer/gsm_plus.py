@@ -6,7 +6,7 @@ from typing import List
 from collections.abc import Iterator, Sequence
 
 from ..data_utils import dataset_cache_dir, download_file, write_jsonl
-from src.dataset.data_prepper.prepper_registry import FREE_ANSWER_REGISTRY
+from src.eval.datasets.data_prepper.prepper_registry import FREE_ANSWER_REGISTRY
 
 DATA_URL = (
     "https://huggingface.co/datasets/qintongli/GSM-Plus/resolve/main/data/test-00000-of-00001.jsonl?download=true"

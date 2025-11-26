@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from src.dataset.data_struct.code_generation import (
+from src.eval.datasets.data_struct.code_generation import (
     CodeGenerationDataset,
     CodeGenerationRecord,
 )

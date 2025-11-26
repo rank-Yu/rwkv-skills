@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List
 
 from ..data_utils import load_qwen_dataset, write_jsonl
-from src.dataset.data_prepper.prepper_registry import FREE_ANSWER_REGISTRY
+from src.eval.datasets.data_prepper.prepper_registry import FREE_ANSWER_REGISTRY
 
 
 @FREE_ANSWER_REGISTRY.register("gaokao2023en")

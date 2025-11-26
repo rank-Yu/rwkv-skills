@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.dataset.data_struct.multiple_choice import (
+from src.eval.datasets.data_struct.multiple_choice import (
     MultipleChoiceDataset,
     MultipleChoiceRecord,
 )

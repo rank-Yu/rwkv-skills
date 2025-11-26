@@ -10,7 +10,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
     load_dataset = None  # type: ignore
 
 from ..data_utils import configure_hf_home, write_jsonl
-from src.dataset.data_prepper.prepper_registry import MULTIPLE_CHOICE_REGISTRY
+from src.eval.datasets.data_prepper.prepper_registry import MULTIPLE_CHOICE_REGISTRY
 
 _SUBCATEGORIES: dict[str, str] = {
     "abstract_algebra": "math",

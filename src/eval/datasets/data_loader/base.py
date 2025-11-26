@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Generic, TypeVar
 from collections.abc import Iterator
 
-from src.dataset.data_struct.base import JsonlDataset
+from src.eval.datasets.data_struct.base import JsonlDataset
 
 RecordT = TypeVar("RecordT")
 DatasetT = TypeVar("DatasetT", bound=JsonlDataset[RecordT])

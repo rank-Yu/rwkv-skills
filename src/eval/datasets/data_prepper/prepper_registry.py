@@ -26,6 +26,8 @@ class DatasetRegistry:
 
         return decorator
 
+    __call__ = register
+
     def get(self, dataset_name: str) -> DatasetPreparer | None:
         return self._preparers.get(dataset_name.lower())
 

@@ -6,7 +6,7 @@ from typing import List
 from collections.abc import Iterator
 
 from ..data_utils import dataset_cache_dir, download_file, write_jsonl
-from src.dataset.data_prepper.prepper_registry import FREE_ANSWER_REGISTRY
+from src.eval.datasets.data_prepper.prepper_registry import FREE_ANSWER_REGISTRY
 
 DATA_URL = "https://raw.githubusercontent.com/protagolabs/odyssey-math/main/final-odyssey-math-with-levels.jsonl"
 

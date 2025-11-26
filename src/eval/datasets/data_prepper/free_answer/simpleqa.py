@@ -6,7 +6,7 @@ from typing import Dict, List
 from collections.abc import Iterable
 
 from ..data_utils import dataset_cache_dir, download_file, iter_hf_dataset, write_jsonl
-from src.dataset.data_prepper.prepper_registry import FREE_ANSWER_REGISTRY
+from src.eval.datasets.data_prepper.prepper_registry import FREE_ANSWER_REGISTRY
 
 SIMPLEQA_TEST_CSV = "https://openaipublic.blob.core.windows.net/simple-evals/simple_qa_test_set.csv"
 

@@ -4,7 +4,10 @@ import json
 from typing import Any
 from collections.abc import Sequence
 
-from src.dataset.data_struct.free_answer import FreeAnswerDataset, FreeAnswerRecord
+from src.eval.datasets.data_struct.free_answer import (
+    FreeAnswerDataset,
+    FreeAnswerRecord,
+)
 from .base import JsonlDatasetLoader
 
 

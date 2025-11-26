@@ -6,7 +6,7 @@ from typing import List
 from collections.abc import Iterable
 
 from ..data_utils import dataset_cache_dir, download_file, read_jsonl, write_jsonl
-from src.dataset.data_prepper.prepper_registry import INSTRUCTION_FOLLOWING_REGISTRY
+from src.eval.datasets.data_prepper.prepper_registry import INSTRUCTION_FOLLOWING_REGISTRY
 
 DATA_URL = "https://raw.githubusercontent.com/allenai/IFBench/refs/heads/main/data/IFBench_test.jsonl"
 

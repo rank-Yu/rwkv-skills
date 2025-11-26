@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from .base import JsonlDatasetLoader
 
-from src.dataset.data_struct.instruction_following import (
+from src.eval.datasets.data_struct.instruction_following import (
     InstructionFollowingDataset,
     InstructionFollowingRecord,
 )

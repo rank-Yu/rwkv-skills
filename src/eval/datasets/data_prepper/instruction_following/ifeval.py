@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from ..data_utils import download_file, write_jsonl
-from src.dataset.data_prepper.prepper_registry import INSTRUCTION_FOLLOWING_REGISTRY
+from src.eval.datasets.data_prepper.prepper_registry import INSTRUCTION_FOLLOWING_REGISTRY
 
 IFEVAL_URL = (
     "https://raw.githubusercontent.com/google-research/google-research/"

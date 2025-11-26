@@ -6,7 +6,7 @@ from typing import List
 from collections.abc import Sequence
 
 from ..data_utils import write_jsonl
-from src.dataset.data_prepper.prepper_registry import FREE_ANSWER_REGISTRY
+from src.eval.datasets.data_prepper.prepper_registry import FREE_ANSWER_REGISTRY
 
 STATIC_DATASETS = {
     "aime24": "aime24_test.jsonl",

@@ -1,0 +1,470 @@
+from __future__ import annotations
+
+"""User-facing actions backed by the scheduler library."""
+
+import os
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Mapping, Sequence
+
+from .config import (
+    DEFAULT_DISPATCH_POLL_SECONDS,
+    DEFAULT_GPU_IDLE_MAX_MEM,
+    DEFAULT_MODEL_GLOBS,
+    DEFAULT_PYTHON,
+    REPO_ROOT,
+)
+from .datasets import DATASET_ROOTS, DATA_OUTPUT_ROOT
+from .jobs import JOB_CATALOGUE, JobSpec, locate_dataset
+from .naming import build_run_log_name
+from .process import FAILURE_MONITOR, handle_job_failure, launch_job, list_idle_gpus, log_job_event
+from .profiler import BatchProfiler
+from .queue import QueueItem, build_queue
+from .state import (
+    RunningEntry,
+    ensure_dirs,
+    load_running,
+    scan_completed_jobs,
+    stop_job,
+    tail_file,
+    write_pid_file,
+)
+
+
+@dataclass(slots=True)
+class QueueOptions:
+    log_dir: Path
+    pid_dir: Path
+    job_order: tuple[str, ...]
+    model_select: str = "all"
+    min_param_b: float | None = None
+    max_param_b: float | None = None
+    skip_dataset_slugs: tuple[str, ...] = ()
+    model_globs: tuple[str, ...] = DEFAULT_MODEL_GLOBS
+
+
+@dataclass(slots=True)
+class DispatchOptions(QueueOptions):
+    run_log_dir: Path = REPO_ROOT / "logs" / "runs"
+    dispatch_poll_seconds: int = DEFAULT_DISPATCH_POLL_SECONDS
+    gpu_idle_max_mem: int = DEFAULT_GPU_IDLE_MAX_MEM
+    skip_missing_dataset: bool = False
+    clean_param_swap: bool = False
+    batch_cache_path: Path | None = None
+
+
+@dataclass(slots=True)
+class StatusOptions:
+    pid_dir: Path
+
+
+@dataclass(slots=True)
+class StopOptions:
+    pid_dir: Path
+    job_ids: tuple[str, ...] = ()
+    stop_all: bool = False
+
+
+@dataclass(slots=True)
+class LogsOptions:
+    run_log_dir: Path
+    pid_dir: Path
+    tail_lines: int = 60
+    rotate_seconds: int = 15
+
+
+def action_queue(opts: QueueOptions) -> list[QueueItem]:
+    completed, _ = scan_completed_jobs(opts.log_dir)
+    running_entries = load_running(opts.pid_dir)
+    pending = build_queue(
+        model_globs=opts.model_globs,
+        job_order=opts.job_order,
+        completed=completed,
+        running=running_entries.keys(),
+        skip_dataset_slugs=opts.skip_dataset_slugs,
+        model_select=opts.model_select,
+        min_param_b=opts.min_param_b,
+        max_param_b=opts.max_param_b,
+    )
+    _print_queue_summary(pending, running_entries)
+    return pending
+
+
+def action_dispatch(opts: DispatchOptions) -> None:
+    ensure_dirs(opts.log_dir, opts.pid_dir, opts.run_log_dir)
+    if opts.clean_param_swap:
+        _clean_param_swap_records(opts.log_dir)
+
+    batch_cache = opts.batch_cache_path or (opts.log_dir / "batch_cache.json")
+    batch_profiler = BatchProfiler(batch_cache)
+
+    FAILURE_MONITOR.reset()
+    pending_since: dict[str, float] = {}
+    launch_times: dict[str, float] = {}
+    job_metadata: dict[str, dict[str, object]] = {}
+    completed_log_ids: set[str] | None = None
+    pending_notice_printed = False
+
+    while True:
+        failure = FAILURE_MONITOR.wait_failure(timeout=0)
+        if failure is not None:
+            handle_job_failure(failure, opts.pid_dir, job_metadata, launch_times)
+            print("❗️ 调度因异常退出而终止。")
+            return
+
+        completed, completed_records = scan_completed_jobs(opts.log_dir)
+        running_entries = load_running(opts.pid_dir)
+        queue = build_queue(
+            model_globs=opts.model_globs,
+            job_order=opts.job_order,
+            completed=completed,
+            running=running_entries.keys(),
+            skip_dataset_slugs=opts.skip_dataset_slugs,
+            model_select=opts.model_select,
+            min_param_b=opts.min_param_b,
+            max_param_b=opts.max_param_b,
+        )
+        now = time.time()
+
+        completed_ids = set(completed_records.keys())
+        new_completed = set() if completed_log_ids is None else completed_ids - completed_log_ids
+        if new_completed:
+            for job_id in sorted(new_completed):
+                info = completed_records[job_id]
+                meta = job_metadata.pop(job_id, {})
+                start = launch_times.pop(job_id, None)
+                runtime = now - start if start else None
+                pending_since.pop(job_id, None)
+                payload: dict[str, object] = {
+                    "job": info.key.job,
+                    "dataset_slug": info.key.dataset_slug,
+                    "model_slug": info.key.model_slug,
+                    "dataset_path": info.dataset_path,
+                    "model_name": info.model_name,
+                    "log_path": str(info.log_path),
+                    "runtime_s": runtime,
+                    "is_cot": info.key.is_cot,
+                }
+                payload.update(meta)
+                log_job_event("job_done", job_id, **payload)
+        completed_log_ids = completed_ids
+
+        for position, item in enumerate(queue):
+            if item.job_id not in pending_since:
+                pending_since[item.job_id] = now
+                meta = job_metadata.setdefault(item.job_id, {})
+                meta.setdefault("job", item.job_name)
+                meta.setdefault("dataset_slug", item.dataset_slug)
+                meta.setdefault("model_path", str(item.model_path))
+                meta.setdefault("model_slug", item.model_slug)
+                log_job_event(
+                    "job_pending",
+                    item.job_id,
+                    job=item.job_name,
+                    dataset_slug=item.dataset_slug,
+                    model_path=str(item.model_path),
+                    queue_pos=position,
+                    pending=len(queue),
+                )
+
+        if not queue:
+            running_count = len(running_entries)
+            if running_count > 0:
+                if not pending_notice_printed:
+                    print(f"⏳ 所有任务已调度，等待 {running_count} 个任务完成…")
+                    pending_notice_printed = True
+                log_job_event(
+                    "dispatcher_wait",
+                    "_dispatcher",
+                    reason="running",
+                    running=running_count,
+                    pending=0,
+                )
+                time.sleep(opts.dispatch_poll_seconds)
+                continue
+            print("🎉 所有任务调度完成")
+            log_job_event("dispatcher_done", "_dispatcher", completed=len(completed_records))
+            break
+
+        pending_notice_printed = False
+        idle_gpus = list_idle_gpus(opts.gpu_idle_max_mem)
+        running_gpus = {entry.gpu for entry in running_entries.values() if entry.gpu}
+        available_gpus = [gpu for gpu in idle_gpus if gpu not in running_gpus]
+        if not available_gpus:
+            running_count = len(running_entries)
+            suffix = f"（当前运行 {running_count} 个任务）" if running_count else ""
+            print(f"⏳ 未检测到空闲 GPU，{opts.dispatch_poll_seconds} 秒后重试{suffix}")
+            log_job_event(
+                "dispatcher_wait",
+                "_dispatcher",
+                reason="no_gpu",
+                pending=len(queue),
+                running=running_count,
+            )
+            time.sleep(opts.dispatch_poll_seconds)
+            continue
+
+        jobs_to_launch = min(len(queue), len(available_gpus))
+        print(f"🧮 Pending={len(queue)} | Idle GPUs={', '.join(available_gpus)}")
+
+        for item, gpu in zip(queue[:jobs_to_launch], available_gpus):
+            job = JOB_CATALOGUE[item.job_name]
+            dataset_slug = item.dataset_slug
+            try:
+                dataset_path = locate_dataset(dataset_slug, search=DATASET_ROOTS, output_root=DATA_OUTPUT_ROOT)
+            except FileNotFoundError as exc:
+                if opts.skip_missing_dataset:
+                    print(f"⚠️  {item.job_id} 缺少数据集：{exc}. 已跳过。")
+                    log_job_event(
+                        "job_skip",
+                        item.job_id,
+                        reason="missing_dataset",
+                        dataset_slug=dataset_slug,
+                    )
+                    continue
+                log_job_event(
+                    "job_error",
+                    item.job_id,
+                    reason="missing_dataset",
+                    dataset_slug=dataset_slug,
+                )
+                raise
+
+            log_name = build_run_log_name(item.model_path, dataset_slug, is_cot=job.is_cot)
+            log_path = opts.run_log_dir / log_name
+            pid_path = opts.pid_dir / f"{item.job_id}.pid"
+            item.dataset_path = dataset_path
+
+            if pid_path.exists():
+                lines = pid_path.read_text().splitlines()
+                if lines:
+                    try:
+                        existing_pid = int(lines[0])
+                    except ValueError:
+                        existing_pid = None
+                    else:
+                        if existing_pid and existing_pid > 0:
+                            print(f"ℹ️  {item.job_id} 已有运行中的 PID({existing_pid})，跳过")
+                            log_job_event(
+                                "job_skip",
+                                item.job_id,
+                                reason="already_running",
+                                pid=existing_pid,
+                            )
+                            continue
+                pid_path.unlink(missing_ok=True)
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "RWKV_SKILLS_JOB_ID": item.job_id,
+                    "RWKV_SKILLS_JOB_NAME": item.job_name,
+                    "RWKV_SKILLS_MODEL_PATH": str(item.model_path),
+                    "RWKV_SKILLS_DATASET": str(dataset_path),
+                    "RWKV_SKILLS_DATASET_SLUG": dataset_slug,
+                    "RWKV_SKILLS_LOG_PATH": str(log_path),
+                    "RWKV_SKILLS_DISABLE_PARAM_SEARCH": "1",
+                }
+            )
+
+            batch_size = batch_profiler.determine_batch_size(
+                job=job,
+                job_id=item.job_id,
+                gpu=gpu,
+                dataset_path=dataset_path,
+                model_path=item.model_path,
+                model_slug=item.model_slug,
+                env=env,
+            )
+
+            command = build_command(job, item.model_path, dataset_path, f"cuda:{gpu}", batch_size=batch_size)
+            print(f"🚀 Launch {item.job_id} -> cuda:{gpu}")
+            print(f"    Dataset: {dataset_path}")
+            print(f"    Log: {log_path}")
+            print(f"    Cmd: {' '.join(command)}")
+            meta = job_metadata.setdefault(item.job_id, {})
+            meta.update(
+                job=item.job_name,
+                dataset_slug=dataset_slug,
+                dataset_path=str(dataset_path),
+                model_path=str(item.model_path),
+                model_slug=item.model_slug,
+                log_path=str(log_path),
+            )
+
+            process = launch_job(
+                item.job_id,
+                command,
+                cwd=REPO_ROOT,
+                log_path=log_path,
+                env=env,
+            )
+            write_pid_file(opts.pid_dir, item.job_id, process.pid, gpu, log_name)
+            launch_times[item.job_id] = time.time()
+            pending_start = pending_since.pop(item.job_id, None)
+            wait_s = time.time() - pending_start if pending_start else None
+            log_job_event(
+                "job_launch",
+                item.job_id,
+                job=item.job_name,
+                dataset_slug=dataset_slug,
+                dataset_path=str(dataset_path),
+                model_path=str(item.model_path),
+                log_path=str(log_path),
+                gpu=f"cuda:{gpu}",
+                pid=process.pid,
+                wait_s=wait_s,
+            )
+
+        time.sleep(1)
+
+
+def build_command(
+    job: JobSpec,
+    model_path: Path,
+    dataset_path: Path,
+    device: str,
+    *,
+    batch_size: int | None = None,
+) -> list[str]:
+    base = [DEFAULT_PYTHON, "-m", job.module]
+    args = [
+        "--model-path",
+        str(model_path),
+        "--dataset",
+        str(dataset_path),
+        "--device",
+        device,
+    ]
+    if batch_size is not None and job.batch_flag:
+        args.extend([job.batch_flag, str(batch_size)])
+    if job.extra_args:
+        args.extend(job.extra_args)
+    return base + args
+
+
+def action_status(opts: StatusOptions) -> dict[str, RunningEntry]:
+    running = load_running(opts.pid_dir)
+    if not running:
+        print("🟡 无运行任务")
+        return running
+    header = f"{'Job ID':<32} {'GPU':<6} PID"
+    print(header)
+    print("-" * len(header))
+    for job_id, entry in sorted(running.items()):
+        gpu = entry.gpu or "?"
+        print(f"{job_id:<32} {gpu:<6} {entry.pid}")
+    return running
+
+
+def action_stop(opts: StopOptions) -> None:
+    pid_dir = opts.pid_dir
+    if opts.stop_all:
+        running = load_running(pid_dir)
+        if not running:
+            print("ℹ️  无运行任务")
+            return
+        for job_id in sorted(running.keys()):
+            stop_job(job_id, pid_dir)
+        return
+
+    if not opts.job_ids:
+        print("请指定 job id，或使用 --all")
+        return
+    for job_id in opts.job_ids:
+        stop_job(job_id, pid_dir)
+
+
+def action_logs(opts: LogsOptions) -> None:
+    run_log_dir = opts.run_log_dir
+    pid_dir = opts.pid_dir
+    if not run_log_dir.exists():
+        print(f"Log 目录 {run_log_dir} 不存在")
+        return
+    running = load_running(pid_dir)
+    if not running:
+        print("当前没有运行中的任务；logs 仅展示活跃任务。")
+        return
+
+    display_items: list[tuple[str, Path]] = []
+    for job_id in sorted(running.keys()):
+        entry = running[job_id]
+        log_path = entry.log_path
+        if log_path is None:
+            log_path = run_log_dir / f"{job_id}.log"
+        elif not log_path.is_absolute():
+            log_path = run_log_dir / log_path
+        display_items.append((job_id, log_path))
+
+    if not display_items:
+        print("当前没有运行中的任务；logs 仅展示活跃任务。")
+        return
+
+    rotate_seconds = max(1, opts.rotate_seconds)
+    alt_screen = "\033[?1049h"
+    restore_screen = "\033[?1049l"
+    clear_screen = "\033[2J\033[H"
+    hide_cursor = "\033[?25l"
+    show_cursor = "\033[?25h"
+
+    try:
+        if not _write_stdout(alt_screen + hide_cursor):
+            raise RuntimeError("stdout write failed")
+        sys.stdout.flush()
+        while True:
+            for job_id, log_path in display_items:
+                if not _write_stdout(clear_screen):
+                    raise RuntimeError("stdout write failed")
+                sys.stdout.flush()
+                lines = tail_file(log_path, opts.tail_lines)
+                print(f"===> {job_id} | {log_path}")
+                print("\n".join(lines))
+                time.sleep(rotate_seconds)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        _write_stdout(restore_screen + show_cursor)
+
+
+def _clean_param_swap_records(log_dir: Path) -> None:
+    target = (log_dir / "param_swap").resolve()
+    if not target.exists():
+        return
+    import shutil
+
+    shutil.rmtree(target, ignore_errors=True)
+    print(f"🧹 已清理参数搜索记录: {target}")
+
+
+def _print_queue_summary(pending: Sequence[QueueItem], running: Mapping[str, RunningEntry]) -> None:
+    if not pending:
+        print("🟢 没有需要调度的任务")
+        if running:
+            print(f"ℹ️  当前运行 {len(running)} 个任务")
+        return
+    print(f"待调度任务：{len(pending)}")
+    for idx, item in enumerate(pending, start=1):
+        print(f"[{idx:02d}] {item.job_id} | {item.model_path.name} | {item.dataset_slug}")
+    if running:
+        print(f"ℹ️  当前运行 {len(running)} 个任务")
+
+
+def _write_stdout(text: str) -> bool:
+    return sys.stdout.write(text) >= 0
+
+
+__all__ = [
+    "DispatchOptions",
+    "QueueOptions",
+    "StatusOptions",
+    "StopOptions",
+    "LogsOptions",
+    "action_dispatch",
+    "action_queue",
+    "action_status",
+    "action_stop",
+    "action_logs",
+    "MODEL_SELECT_CHOICES",
+]

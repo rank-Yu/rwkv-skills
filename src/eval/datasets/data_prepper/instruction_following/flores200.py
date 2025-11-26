@@ -5,7 +5,7 @@ from typing import Dict, List
 from collections.abc import Iterable, Sequence
 
 from ..data_utils import configure_hf_home, write_jsonl
-from src.dataset.data_prepper.prepper_registry import INSTRUCTION_FOLLOWING_REGISTRY
+from src.eval.datasets.data_prepper.prepper_registry import INSTRUCTION_FOLLOWING_REGISTRY
 
 DATASET_ID = "openlanguagedata/flores_plus"
 DEFAULT_SOURCE_LANGUAGES: Sequence[str] = ("en", "de", "es", "fr", "it", "ja")

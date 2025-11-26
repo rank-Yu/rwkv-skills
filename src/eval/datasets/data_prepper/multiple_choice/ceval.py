@@ -5,7 +5,7 @@ from typing import Dict, List
 from collections.abc import Iterable
 
 from ..data_utils import configure_hf_home, write_jsonl
-from src.dataset.data_prepper.prepper_registry import MULTIPLE_CHOICE_REGISTRY
+from src.eval.datasets.data_prepper.prepper_registry import MULTIPLE_CHOICE_REGISTRY
 
 _DATASET_ID = "ceval/ceval-exam"
 _ALLOWED_SPLITS: dict[str, str] = {

@@ -5,7 +5,7 @@ from typing import Dict, List
 from collections.abc import Iterable, Sequence
 
 from ..data_utils import configure_hf_home, write_jsonl
-from src.dataset.data_prepper.prepper_registry import INSTRUCTION_FOLLOWING_REGISTRY
+from src.eval.datasets.data_prepper.prepper_registry import INSTRUCTION_FOLLOWING_REGISTRY
 
 DATASET_ID = "google/wmt24pp"
 DEFAULT_TARGET_LANGUAGES: Sequence[str] = ("de_DE", "es_MX", "fr_FR", "it_IT", "ja_JP")
