@@ -45,7 +45,7 @@ class JsonlDataset(Sequence[T], Generic[T]):
             yield batch
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class RecordBase:
     """Base class for JSONL records that carry optional metadata."""
 
