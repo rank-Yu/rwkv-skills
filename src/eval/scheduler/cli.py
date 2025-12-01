@@ -108,6 +108,12 @@ def _add_job_filters(parser: argparse.ArgumentParser) -> None:
         help="跳过指定 job",
     )
     parser.add_argument(
+        "--domains",
+        nargs="+",
+        choices=("code", "multi_choice", "free_response", "instruction_following"),
+        help="按任务域筛选 job，例如 --domains code",
+    )
+    parser.add_argument(
         "--skip-datasets",
         nargs="+",
         help="跳过指定数据集 slug（使用 canonical 名称）",
@@ -119,7 +125,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     command = args.command
 
-    job_order = _resolve_job_order(getattr(args, "only_jobs", None), getattr(args, "skip_jobs", None))
+    job_order = _resolve_job_order(
+        getattr(args, "only_jobs", None),
+        getattr(args, "skip_jobs", None),
+        getattr(args, "domains", None),
+    )
     if not job_order:
         print("⚠️ 未剩余可调度的 job，请检查 --only-jobs / --skip-jobs 参数设置")
         return 1
@@ -181,8 +191,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _resolve_job_order(include: Sequence[str] | None, exclude: Sequence[str] | None) -> tuple[str, ...]:
+def _resolve_job_order(
+    include: Sequence[str] | None,
+    exclude: Sequence[str] | None,
+    domains: Sequence[str] | None,
+) -> tuple[str, ...]:
     order = list(JOB_ORDER)
+
+    if domains:
+        domain_map = {
+            "code": {"code_human_eval", "code_mbpp"},
+            "multi_choice": {"multi_choice_plain", "multi_choice_cot"},
+            "free_response": {"free_response", "free_response_judge"},
+            "instruction_following": {"instruction_following"},
+        }
+        allowed = set()
+        for dom in domains:
+            allowed.update(domain_map.get(dom, set()))
+        order = [job for job in order if job in allowed]
+
     if include:
         allowed = {job for job in include}
         order = [job for job in order if job in allowed]

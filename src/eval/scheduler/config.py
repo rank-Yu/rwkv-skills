@@ -23,6 +23,7 @@ DEFAULT_RUN_LOG_DIR = _path_env("RUN_RUN_LOG_DIR", RESULTS_ROOT / "logs")
 DEFAULT_PID_DIR = _path_env("RUN_PID_DIR", RESULTS_ROOT / "pids")
 
 DEFAULT_MODEL_GLOBS: tuple[str, ...] = (
+    "/public/home/ssjxzkz/Weights/BlinkDL__rwkv7-g1/*.pth",
     str(REPO_ROOT / "weights" / "rwkv7-*.pth"),
 )
 
