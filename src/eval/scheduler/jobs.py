@@ -134,15 +134,15 @@ INSTRUCTION_FOLLOWING_DATASET_SLUGS: Final[tuple[str, ...]] = tuple(sorted(set(i
 
 
 JOB_CATALOGUE: dict[str, JobSpec] = {
-    "single_choice_plain": JobSpec(
-        name="single_choice_plain",
-        module="src.bin.eval_single_choice",
+    "multi_choice_plain": JobSpec(
+        name="multi_choice_plain",
+        module="src.bin.eval_multi_choice",
         dataset_slugs=MULTICHOICE_DATASET_SLUGS,
         is_cot=False,
     ),
-    "single_choice_cot": JobSpec(
-        name="single_choice_cot",
-        module="src.bin.eval_single_choice_cot",
+    "multi_choice_cot": JobSpec(
+        name="multi_choice_cot",
+        module="src.bin.eval_multi_choice_cot",
         dataset_slugs=MULTICHOICE_DATASET_SLUGS,
         is_cot=True,
         extra_args=("--no-param-search",),
@@ -150,9 +150,9 @@ JOB_CATALOGUE: dict[str, JobSpec] = {
         probe_flag="--probe-only",
         probe_dataset_required=True,
     ),
-    "cot_general": JobSpec(
-        name="cot_general",
-        module="src.bin.eval_cot_freeform",
+    "free_response": JobSpec(
+        name="free_response",
+        module="src.bin.eval_free_response",
         dataset_slugs=MATH_DATASET_SLUGS,
         is_cot=True,
         extra_args=("--no-param-search",),
@@ -160,9 +160,9 @@ JOB_CATALOGUE: dict[str, JobSpec] = {
         probe_flag="--probe-only",
         probe_dataset_required=True,
     ),
-    "cot_llm_judge": JobSpec(
-        name="cot_llm_judge",
-        module="src.bin.eval_cot_judge",
+    "free_response_judge": JobSpec(
+        name="free_response_judge",
+        module="src.bin.eval_free_response_judge",
         dataset_slugs=LLM_JUDGE_DATASET_SLUGS,
         is_cot=True,
         extra_args=("--no-param-search",),
@@ -176,12 +176,6 @@ JOB_CATALOGUE: dict[str, JobSpec] = {
         dataset_slugs=INSTRUCTION_FOLLOWING_DATASET_SLUGS,
         is_cot=False,
         extra_args=("--no-param-search",),
-    ),
-    "code_evalplus": JobSpec(
-        name="code_evalplus",
-        module="src.bin.eval_code_evalplus",
-        dataset_slugs=CODE_DATASET_SLUGS,
-        is_cot=False,
     ),
 }
 

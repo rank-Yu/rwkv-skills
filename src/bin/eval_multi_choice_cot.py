@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+"""Run chain-of-thought multiple-choice evaluation for RWKV models."""
+
+import argparse
+import os
+from pathlib import Path
+from typing import Sequence
+
+from src.eval.datasets.data_loader.multiple_choice import JsonlMultipleChoiceLoader
+from src.eval.results.layout import jsonl_path
+from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path
+from src.eval.evaluators.multi_choice import MultipleChoicePipeline, COT_SAMPLING
+from src.infer.model import ModelLoadConfig
+
+
+def _resolve_output_path(dataset: str, model_path: str, user_path: str | None) -> Path:
+    if user_path:
+        return Path(user_path).expanduser()
+    env_path = os.environ.get("RWKV_SKILLS_LOG_PATH")
+    if env_path:
+        return Path(env_path).expanduser()
+    slug = infer_dataset_slug_from_path(dataset)
+    return jsonl_path(slug, is_cot=True, model_name=Path(model_path).stem)
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="RWKV multiple-choice CoT evaluator")
+    parser.add_argument("--model-path", required=True, help="Path to RWKV weights (.pth)")
+    parser.add_argument("--dataset", required=True, help="JSONL dataset path")
+    parser.add_argument("--device", default="cuda", help="Device string, e.g. cuda:0 or cpu")
+    parser.add_argument("--batch-size", type=int, default=64, help="Batch size for generation/scoring")
+    parser.add_argument("--max-samples", type=int, help="Limit number of samples for quick runs")
+    parser.add_argument("--target-token-format", default=" <LETTER>", help="Token format for answer tokens")
+    parser.add_argument("--output", help="Output JSONL path (defaults to results/logs layout)")
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    out_path = _resolve_output_path(args.dataset, args.model_path, args.output)
+    config = ModelLoadConfig(weights_path=args.model_path, device=args.device)
+    pipeline = MultipleChoicePipeline(config, target_token_format=args.target_token_format)
+
+    # Quick validation of dataset readability before heavy model init
+    _ = JsonlMultipleChoiceLoader(args.dataset).load()
+
+    result = pipeline.run_chain_of_thought(
+        dataset_path=args.dataset,
+        output_path=str(out_path),
+        cot_sampling=COT_SAMPLING,
+        batch_size=max(1, args.batch_size),
+        sample_limit=args.max_samples,
+    )
+    print(f"✅ CoT multiple-choice done: {result.sample_count} samples -> {result.output_path}")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

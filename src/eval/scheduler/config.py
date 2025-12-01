@@ -24,7 +24,6 @@ DEFAULT_PID_DIR = _path_env("RUN_PID_DIR", RESULTS_ROOT / "pids")
 
 DEFAULT_MODEL_GLOBS: tuple[str, ...] = (
     str(REPO_ROOT / "weights" / "rwkv7-*.pth"),
-    "/public/home/ssjxzkz/Weights/BlinkDL__rwkv7-*/rwkv7-*.pth",
 )
 
 DEFAULT_GPU_IDLE_MAX_MEM = int(os.environ.get("RUN_GPU_IDLE_MAX_MEM", "1000"))
