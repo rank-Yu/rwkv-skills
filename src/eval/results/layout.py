@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from pathlib import Path
 
 from src.eval.scheduler.config import RESULTS_ROOT, DEFAULT_LOG_DIR, DEFAULT_RUN_LOG_DIR
@@ -41,4 +43,53 @@ __all__ = [
     "result_basename",
     "jsonl_path",
     "scores_path",
+    "write_scores_json",
 ]
+
+
+def write_scores_json(
+    dataset_slug: str,
+    *,
+    is_cot: bool,
+    model_name: str,
+    metrics: dict,
+    samples: int,
+    log_path: Path | str,
+    task: str | None = None,
+    task_details: dict | None = None,
+    extra: dict | None = None,
+) -> Path:
+    """Persist aggregated metrics as JSON in the canonical scores directory.
+
+    The payload shape intentionally mirrors the documented example:
+    {
+        "dataset": ..., "model": ..., "cot": bool,
+        "metrics": {...}, "samples": int,
+        "created_at": iso8601, "log_path": "results/logs/...jsonl",
+        "task": "optional task name",
+        "task_details": {"task specific breakdowns"},
+        ...extra
+    }
+    """
+
+    ensure_results_structure()
+    path = scores_path(dataset_slug, is_cot=is_cot, model_name=model_name)
+    payload = {
+        "dataset": dataset_slug,
+        "model": model_name,
+        "cot": bool(is_cot),
+        "metrics": metrics,
+        "samples": int(samples),
+        "created_at": datetime.utcnow().replace(microsecond=False).isoformat() + "Z",
+        "log_path": str(log_path),
+    }
+    if task:
+        payload["task"] = task
+    if task_details:
+        payload["task_details"] = task_details
+    if extra:
+        payload.update(extra)
+
+    with path.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+    return path

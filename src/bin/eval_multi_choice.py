@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Sequence
 
 from src.eval.datasets.data_loader.multiple_choice import JsonlMultipleChoiceLoader
-from src.eval.results.layout import jsonl_path
+from src.eval.metrics.multi_choice import evaluate_predictions, load_predictions
+from src.eval.results.layout import jsonl_path, write_scores_json
 from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path
 from src.eval.evaluators.multi_choice import MultipleChoicePipeline
 from src.infer.model import ModelLoadConfig
@@ -38,6 +39,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    slug = infer_dataset_slug_from_path(args.dataset)
     out_path = _resolve_output_path(args.dataset, args.model_path, args.output, is_cot=False)
     config = ModelLoadConfig(weights_path=args.model_path, device=args.device)
     pipeline = MultipleChoicePipeline(config, target_token_format=args.target_token_format)
@@ -50,7 +52,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_path=str(out_path),
         sample_limit=args.max_samples,
     )
+    preds = load_predictions(out_path)
+    metrics = evaluate_predictions(preds)
+    score_path = write_scores_json(
+        slug,
+        is_cot=False,
+        model_name=Path(args.model_path).stem,
+        metrics={"accuracy": metrics.accuracy},
+        samples=len(preds),
+        log_path=out_path,
+        task="multiple_choice",
+        task_details={"accuracy_by_subject": metrics.score_by_subject},
+    )
     print(f"✅ direct multiple-choice done: {result.sample_count} samples -> {result.output_path}")
+    print(f"📊 scores saved: {score_path}")
     return 0
 
 

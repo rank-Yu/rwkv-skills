@@ -9,7 +9,7 @@ from typing import Sequence
 
 from dataclasses import replace
 
-from src.eval.results.layout import jsonl_path
+from src.eval.results.layout import jsonl_path, write_scores_json
 from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path
 from src.eval.evaluators.coding import CodingPipeline, DEFAULT_CODE_SAMPLING
 from src.infer.model import ModelLoadConfig
@@ -45,6 +45,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    slug = infer_dataset_slug_from_path(args.dataset)
     out_path = _resolve_output_path(args.dataset, args.model_path, args.output)
 
     sampling = DEFAULT_CODE_SAMPLING
@@ -73,6 +74,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"✅ HumanEval生成完成：{result.sample_count} completions -> {result.output_path}")
     if result.eval_results:
         print(f"HumanEval 评测: {result.eval_results} (详情: {result.eval_details_path})")
+    score_path = write_scores_json(
+        slug,
+        is_cot=False,
+        model_name=Path(args.model_path).stem,
+        metrics=result.eval_results or {},
+        samples=result.sample_count,
+        log_path=out_path,
+        task="code_humaneval",
+        task_details={
+            "eval_details_path": str(result.eval_details_path) if result.eval_details_path else None
+        },
+    )
+    print(f"📊 scores saved: {score_path}")
     return 0
 
 

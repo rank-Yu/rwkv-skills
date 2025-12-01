@@ -7,7 +7,8 @@ import os
 from pathlib import Path
 from typing import Sequence
 
-from src.eval.results.layout import jsonl_path
+from src.eval.metrics.free_response import evaluate_exact, load_samples
+from src.eval.results.layout import jsonl_path, write_scores_json
 from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path
 from src.eval.evaluators.free_response import (
     FreeResponsePipeline,
@@ -42,6 +43,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    slug = infer_dataset_slug_from_path(args.dataset)
     out_path = _resolve_output_path(args.dataset, args.model_path, args.output)
     config = ModelLoadConfig(weights_path=args.model_path, device=args.device)
     pipeline = FreeResponsePipeline(config)
@@ -57,7 +59,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         batch_size=max(1, args.batch_size),
         sample_limit=args.max_samples,
     )
+    samples = load_samples(out_path)
+    metrics = evaluate_exact(samples)
+    score_path = write_scores_json(
+        slug,
+        is_cot=True,
+        model_name=Path(args.model_path).stem,
+        metrics={
+            "exact_accuracy": metrics.exact_accuracy,
+            "judge_accuracy": metrics.judge_accuracy,
+        },
+        samples=len(samples),
+        log_path=out_path,
+        task="free_response",
+    )
     print(f"✅ CoT free-form done: {result.sample_count} samples -> {result.output_path}")
+    print(f"📊 scores saved: {score_path}")
     return 0
 
 

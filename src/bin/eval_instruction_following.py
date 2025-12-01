@@ -9,7 +9,11 @@ from typing import Sequence
 
 from dataclasses import replace
 
-from src.eval.results.layout import jsonl_path
+from src.eval.metrics.instruction_following.metrics import (
+    evaluate_samples,
+    load_samples_from_jsonl,
+)
+from src.eval.results.layout import jsonl_path, write_scores_json
 from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path
 from src.eval.evaluators.instruction_following import InstructionFollowingPipeline, DEFAULT_SAMPLING
 from src.infer.model import ModelLoadConfig
@@ -41,6 +45,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    slug = infer_dataset_slug_from_path(args.dataset)
     out_path = _resolve_output_path(args.dataset, args.model_path, args.output)
     config = ModelLoadConfig(weights_path=args.model_path, device=args.device)
     pipeline = InstructionFollowingPipeline(config)
@@ -60,7 +65,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         stop_tokens=sampling.stop_tokens,
         ban_tokens=ban_tokens,
     )
+    samples = load_samples_from_jsonl(out_path)
+    metrics = evaluate_samples(samples, strict=True)
+    score_path = write_scores_json(
+        slug,
+        is_cot=False,
+        model_name=Path(args.model_path).stem,
+        metrics={
+            "prompt_accuracy": metrics.prompt_accuracy,
+            "instruction_accuracy": metrics.instruction_accuracy,
+        },
+        samples=len(samples),
+        log_path=out_path,
+        task="instruction_following",
+        task_details={
+            "tier0_accuracy": metrics.tier0_accuracy,
+            "tier1_accuracy": metrics.tier1_accuracy,
+        },
+    )
     print(f"✅ instruction-following done: {result.sample_count} samples -> {result.output_path}")
+    print(f"📊 scores saved: {score_path}")
     return 0
 
 
