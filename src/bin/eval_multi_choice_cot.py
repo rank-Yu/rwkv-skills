@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import tempfile
 from pathlib import Path
 from typing import Sequence
+import uuid
 
 from src.eval.datasets.data_loader.multiple_choice import JsonlMultipleChoiceLoader
 from src.eval.metrics.multi_choice import evaluate_predictions, load_predictions
@@ -14,6 +16,15 @@ from src.eval.scheduler.dataset_resolver import resolve_or_prepare_dataset
 from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path
 from src.eval.evaluators.multi_choice import MultipleChoicePipeline, COT_SAMPLING
 from src.infer.model import ModelLoadConfig
+
+
+PROBE_MAX_SAMPLES = 1
+PROBE_COT_MAX_TOKENS = 256
+
+
+def _make_probe_output_path(suffix: str = ".jsonl") -> Path:
+    temp_root = Path(tempfile.gettempdir())
+    return temp_root / f"rwkv_probe_{uuid.uuid4().hex}{suffix}"
 
 
 def _resolve_output_path(dataset: str, model_path: str, user_path: str | None) -> Path:
@@ -35,6 +46,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-samples", type=int, help="Limit number of samples for quick runs")
     parser.add_argument("--target-token-format", default=" <LETTER>", help="Token format for answer tokens")
     parser.add_argument("--output", help="Output JSONL path (defaults to results/completions layout)")
+    parser.add_argument(
+        "--probe-only",
+        action="store_true",
+        help="Scheduler compatibility flag: run a single-sample probe and skip scoring",
+    )
+    parser.add_argument(
+        "--no-param-search",
+        action="store_true",
+        help="Compatibility flag (no-op).",
+    )
     return parser.parse_args(argv)
 
 
@@ -53,14 +74,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Quick validation of dataset readability before heavy model init
     _ = JsonlMultipleChoiceLoader(str(dataset_path)).load()
 
+    probe_only = bool(args.probe_only)
+    sample_limit: int | None = args.max_samples
+    cot_sampling = COT_SAMPLING
+    output_path = out_path
+    probe_output_path: Path | None = None
+    if probe_only:
+        sample_limit = PROBE_MAX_SAMPLES
+        cot_sampling = cot_sampling.clamp(PROBE_COT_MAX_TOKENS)
+        probe_output_path = _make_probe_output_path(out_path.suffix or ".jsonl")
+        output_path = probe_output_path
+
     result = pipeline.run_chain_of_thought(
         dataset_path=str(dataset_path),
-        output_path=str(out_path),
-        cot_sampling=COT_SAMPLING,
+        output_path=str(output_path),
+        cot_sampling=cot_sampling,
         batch_size=max(1, args.batch_size),
-        sample_limit=args.max_samples,
+        sample_limit=sample_limit,
     )
-    preds = load_predictions(out_path)
+
+    if probe_only:
+        print(
+            "🧪 probe-only run completed: "
+            f"{result.sample_count} sample(s) evaluated with batch {args.batch_size}."
+        )
+        if probe_output_path:
+            probe_output_path.unlink(missing_ok=True)
+        return 0
+
+    preds = load_predictions(output_path)
     metrics = evaluate_predictions(preds)
     score_path = write_scores_json(
         slug,

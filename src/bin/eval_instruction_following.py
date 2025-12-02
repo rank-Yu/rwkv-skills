@@ -41,6 +41,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--stop-token", action="append", type=int, help="Extra stop tokens (can repeat)")
     parser.add_argument("--ban-token", action="append", type=int, help="Tokens to ban (can repeat)")
     parser.add_argument("--output", help="Output JSONL path (defaults to results/completions layout)")
+    parser.add_argument(
+        "--no-param-search",
+        action="store_true",
+        help="Compatibility flag (no-op).",
+    )
     return parser.parse_args(argv)
 
 

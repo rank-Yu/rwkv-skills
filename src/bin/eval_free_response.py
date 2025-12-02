@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import tempfile
 from pathlib import Path
 from typing import Sequence
+import uuid
 
 from src.eval.metrics.free_response import evaluate_exact, load_samples
 from src.eval.results.layout import jsonl_path, write_scores_json
@@ -17,6 +19,16 @@ from src.eval.evaluators.free_response import (
     DEFAULT_FINAL_SAMPLING,
 )
 from src.infer.model import ModelLoadConfig
+
+
+PROBE_MAX_SAMPLES = 1
+PROBE_COT_MAX_TOKENS = 256
+PROBE_FINAL_MAX_TOKENS = 64
+
+
+def _make_probe_output_path(suffix: str = ".jsonl") -> Path:
+    temp_root = Path(tempfile.gettempdir())
+    return temp_root / f"rwkv_probe_{uuid.uuid4().hex}{suffix}"
 
 
 def _resolve_output_path(dataset: str, model_path: str, user_path: str | None) -> Path:
@@ -39,6 +51,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cot-max-tokens", type=int, help="Clamp CoT generation length")
     parser.add_argument("--final-max-tokens", type=int, help="Clamp final answer generation length")
     parser.add_argument("--output", help="Output JSONL path (defaults to results/completions layout)")
+    parser.add_argument(
+        "--probe-only",
+        action="store_true",
+        help="Scheduler compatibility flag: run a single-sample probe and skip scoring",
+    )
+    parser.add_argument(
+        "--no-param-search",
+        action="store_true",
+        help="Compatibility flag (no-op).",
+    )
     return parser.parse_args(argv)
 
 
@@ -56,16 +78,35 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     cot_sampling = DEFAULT_COT_SAMPLING.clamp(args.cot_max_tokens)
     final_sampling = DEFAULT_FINAL_SAMPLING.clamp(args.final_max_tokens)
+    sample_limit: int | None = args.max_samples
+    output_path = out_path
+    probe_output_path: Path | None = None
+    if args.probe_only:
+        sample_limit = PROBE_MAX_SAMPLES
+        cot_sampling = cot_sampling.clamp(PROBE_COT_MAX_TOKENS)
+        final_sampling = final_sampling.clamp(PROBE_FINAL_MAX_TOKENS)
+        probe_output_path = _make_probe_output_path(out_path.suffix or ".jsonl")
+        output_path = probe_output_path
 
     result = pipeline.run(
         dataset_path=str(dataset_path),
-        output_path=str(out_path),
+        output_path=str(output_path),
         cot_sampling=cot_sampling,
         final_sampling=final_sampling,
         batch_size=max(1, args.batch_size),
-        sample_limit=args.max_samples,
+        sample_limit=sample_limit,
     )
-    samples = load_samples(out_path)
+
+    if args.probe_only:
+        print(
+            "🧪 probe-only run completed: "
+            f"{result.sample_count} sample(s) evaluated with batch {args.batch_size}."
+        )
+        if probe_output_path:
+            probe_output_path.unlink(missing_ok=True)
+        return 0
+
+    samples = load_samples(output_path)
     metrics = evaluate_exact(samples)
     score_path = write_scores_json(
         slug,
