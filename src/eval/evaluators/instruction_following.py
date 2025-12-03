@@ -14,7 +14,7 @@ from src.eval.datasets.data_struct.instruction_following import (
 from src.infer.engine import InferenceEngine
 from src.infer.model import ModelLoadConfig, load_rwkv_model
 from src.infer.sampling import SamplingConfig
-from .common import JsonlStageWriter, SampleRecord, StageRecord
+from .common import JsonlStageWriter, SampleRecord, StageRecord, detect_resume_state
 
 DEFAULT_STOP_TOKENS = (0, 261, 24281)
 DEFAULT_BAN_TOKEN = 295
@@ -60,24 +60,33 @@ class InstructionFollowingPipeline:
         if not records:
             return InstructionFollowingPipelineResult(dataset_name, 0, Path(output_path))
 
-        prompts = [self._make_prompt(record.prompt, enable_think) for record in records]
+        resume = detect_resume_state(output_path)
+        start_index = min(resume.next_index, len(records))
+        if start_index and len(records):
+            remaining = max(len(records) - start_index, 0)
+            print(f"⏩ Instruction-following 恢复运行：已完成 {start_index}/{len(records)}，剩余 {remaining}")
+        remaining_records = records[start_index:]
+        if not remaining_records:
+            return InstructionFollowingPipelineResult(dataset_name, len(records), Path(output_path))
+
         effective_ban = ban_tokens
         if effective_ban is None:
             effective_ban = () if enable_think else (DEFAULT_BAN_TOKEN,)
 
         sampling_cfg = replace(sampling, stop_tokens=stop_tokens, ban_tokens=effective_ban)
 
+        writer = JsonlStageWriter(output_path, resume=resume.has_progress)
+        prompts = [self._make_prompt(record.prompt, enable_think) for record in remaining_records]
         outputs = self.engine.generate(
             prompts,
             sampling=sampling_cfg,
-            batch_size=max(1, min(batch_size, len(records))),
+            batch_size=batch_size,
             progress_desc="Generating instruction-following responses",
         )
         output_by_idx = {item.prompt_index: item for item in outputs}
-
-        writer = JsonlStageWriter(output_path)
-        for idx, record in enumerate(records):
-            seq = output_by_idx.get(idx)
+        for local_idx, record in enumerate(remaining_records):
+            global_idx = start_index + local_idx
+            seq = output_by_idx.get(local_idx)
             if seq is None:
                 continue
             cleaned = seq.text.split("</think>")[-1].strip() if enable_think else seq.text.strip()
@@ -89,13 +98,13 @@ class InstructionFollowingPipeline:
                 "response_clean": cleaned,
             }
             stage = StageRecord(
-                prompt=prompts[idx],
+                prompt=prompts[local_idx],
                 output=seq.text,
                 finish_reason=seq.finish_reason,
             )
             writer.write(
                 SampleRecord(
-                    index=idx,
+                    index=global_idx,
                     dataset=dataset_name,
                     stages=[stage],
                     metadata=metadata,

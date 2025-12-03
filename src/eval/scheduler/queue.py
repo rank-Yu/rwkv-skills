@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Collection, Sequence
+from typing import Collection, Mapping, Sequence
 
 from .dataset_utils import canonical_slug, safe_slug
 from .jobs import JOB_CATALOGUE, JobSpec
@@ -21,6 +21,9 @@ class QueueItem:
     model_path: Path
     model_slug: str
     dataset_path: Path | None = None
+
+
+_UNKNOWN_QUESTION_COUNT = 10**9
 
 
 def build_queue(
@@ -79,4 +82,29 @@ def build_queue(
     return pending
 
 
-__all__ = ["QueueItem", "build_queue"]
+def sort_queue_items(
+    queue: list[QueueItem],
+    *,
+    question_counts: Mapping[str, int] | None = None,
+    job_priority: Mapping[str, int] | None = None,
+) -> list[QueueItem]:
+    """Sort pending jobs so smaller datasets & nocot runs go first."""
+
+    if not queue:
+        return queue
+    counts = question_counts or {}
+    priorities = job_priority or {}
+
+    def _key(item: QueueItem) -> tuple[int, int, int, str, str]:
+        job = JOB_CATALOGUE.get(item.job_name)
+        is_cot = job.is_cot if job else False
+        questions = counts.get(item.dataset_slug, _UNKNOWN_QUESTION_COUNT)
+        job_rank = priorities.get(item.job_name, len(priorities))
+        nocot_rank = 0 if not is_cot else 1
+        return (job_rank, questions, nocot_rank, item.dataset_slug, item.job_id)
+
+    queue.sort(key=_key)
+    return queue
+
+
+__all__ = ["QueueItem", "build_queue", "sort_queue_items"]

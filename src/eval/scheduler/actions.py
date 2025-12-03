@@ -23,9 +23,10 @@ from .config import (
 from .datasets import DATASET_ROOTS, DATA_OUTPUT_ROOT
 from .jobs import JOB_CATALOGUE, JobSpec, locate_dataset
 from .naming import build_run_log_name
-from .process import FAILURE_MONITOR, handle_job_failure, launch_job, list_idle_gpus, log_job_event
+from .process import FAILURE_MONITOR, JobFailure, handle_job_failure, launch_job, list_idle_gpus, log_job_event
 from .profiler import BatchProfiler
-from .queue import QueueItem, build_queue
+from .queue import QueueItem, build_queue, sort_queue_items
+from .question_counts import derive_question_counts
 from .state import (
     RunningEntry,
     ensure_dirs,
@@ -42,6 +43,7 @@ class QueueOptions:
     log_dir: Path
     pid_dir: Path
     job_order: tuple[str, ...]
+    job_priority: tuple[str, ...] | None = None
     model_select: str = "all"
     min_param_b: float | None = None
     max_param_b: float | None = None
@@ -85,6 +87,7 @@ def action_queue(opts: QueueOptions) -> list[QueueItem]:
     completed, score_records = scan_completed_jobs(opts.log_dir)
     failed = {record.key for record in score_records.values() if record.missing_artifacts}
     running_entries = load_running(opts.pid_dir)
+    job_priority_map = _job_priority_map(opts.job_priority)
     pending = build_queue(
         model_globs=opts.model_globs,
         job_order=opts.job_order,
@@ -96,6 +99,8 @@ def action_queue(opts: QueueOptions) -> list[QueueItem]:
         min_param_b=opts.min_param_b,
         max_param_b=opts.max_param_b,
     )
+    question_counts = derive_question_counts(score_records)
+    pending = sort_queue_items(pending, question_counts=question_counts, job_priority=job_priority_map)
     _print_queue_summary(pending, running_entries)
     return pending
 
@@ -107,6 +112,7 @@ def action_dispatch(opts: DispatchOptions) -> None:
 
     batch_cache = opts.batch_cache_path or (opts.log_dir / "batch_cache.json")
     batch_profiler = BatchProfiler(batch_cache)
+    job_priority = _job_priority_map(opts.job_priority)
 
     FAILURE_MONITOR.reset()
     pending_since: dict[str, float] = {}
@@ -119,7 +125,9 @@ def action_dispatch(opts: DispatchOptions) -> None:
     while True:
         failure = FAILURE_MONITOR.wait_failure(timeout=0)
         if failure is not None:
+            failure_meta = job_metadata.get(failure.job_id, {}).copy()
             handle_job_failure(failure, opts.pid_dir, job_metadata, launch_times)
+            _handle_batch_failure(batch_profiler, failure, failure_meta)
             print("❗️ 调度因异常退出而终止。")
             return
 
@@ -151,6 +159,8 @@ def action_dispatch(opts: DispatchOptions) -> None:
             min_param_b=opts.min_param_b,
             max_param_b=opts.max_param_b,
         )
+        question_counts = derive_question_counts(completed_records)
+        queue = sort_queue_items(queue, question_counts=question_counts, job_priority=job_priority)
         now = time.time()
 
         completed_ids = {job_id for job_id, record in completed_records.items() if not record.missing_artifacts}
@@ -333,6 +343,7 @@ def action_dispatch(opts: DispatchOptions) -> None:
                 model_slug=item.model_slug,
                 log_path=str(completion_path),
                 console_log_path=str(console_log_path),
+                gpu=gpu,
             )
 
             process = launch_job(
@@ -497,6 +508,44 @@ def _allocate_console_log_path(base_dir: Path, stem: str) -> Path:
         if not numbered.exists():
             return numbered
         attempt += 1
+
+
+def _handle_batch_failure(batch_profiler: BatchProfiler, failure: JobFailure, metadata: Mapping[str, object]) -> None:
+    if not metadata:
+        return
+    job_name = metadata.get("job")
+    model_slug = metadata.get("model_slug")
+    gpu = metadata.get("gpu")
+    if not job_name or not model_slug or gpu is None:
+        return
+    log_path = failure.log_path
+    if not log_path.exists():
+        return
+    if not _log_contains_oom(log_path):
+        return
+    reason = f"runtime oom ({failure.job_id})"
+    batch_profiler.invalidate_cache(str(job_name), str(model_slug), str(gpu), reason=reason)
+    print(f"⚠️  {failure.job_id} 日志包含 OOM，已清理 {job_name}/{model_slug} 在 GPU {gpu} 的批量缓存。")
+
+
+def _log_contains_oom(log_path: Path, *, tail_bytes: int = 65536) -> bool:
+    try:
+        with log_path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - tail_bytes), os.SEEK_SET)
+            chunk = fh.read()
+    except OSError:
+        return False
+    text = chunk.decode("utf-8", errors="ignore").lower()
+    keywords = ("out of memory", "cuda oom", "cuda out of memory", "torch.outofmemoryerror")
+    return any(keyword in text for keyword in keywords)
+
+
+def _job_priority_map(job_order: Sequence[str] | None) -> dict[str, int]:
+    if not job_order:
+        return {}
+    return {name: idx for idx, name in enumerate(job_order)}
 
 
 def _print_queue_summary(pending: Sequence[QueueItem], running: Mapping[str, RunningEntry]) -> None:

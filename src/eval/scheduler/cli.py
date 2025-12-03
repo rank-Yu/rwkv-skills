@@ -117,6 +117,12 @@ def _add_job_filters(parser: argparse.ArgumentParser) -> None:
         choices=sorted(JOB_CATALOGUE.keys()),
         help="跳过指定 job",
     )
+    parser.add_argument(
+        "--job-order",
+        nargs="+",
+        choices=sorted(JOB_CATALOGUE.keys()),
+        help="自定义 job 优先级（按给定顺序优先），未指定时按题量/CoT 自动排序",
+    )
     if domain_choices:
         parser.add_argument(
             "--domains",
@@ -136,14 +142,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     command = args.command
 
-    job_order = _resolve_job_order(
+    job_list = _resolve_job_list(
         getattr(args, "only_jobs", None),
         getattr(args, "skip_jobs", None),
         getattr(args, "domains", None),
     )
-    if not job_order:
+    if not job_list:
         print("⚠️ 未剩余可调度的 job，请检查 --domains / --only-jobs / --skip-jobs 参数设置")
         return 1
+    job_priority = _resolve_job_priority(getattr(args, "job_order", None), job_list)
 
     model_globs = tuple(getattr(args, "models", list(DEFAULT_MODEL_GLOBS)))
     skip_dataset_slugs = _canonicalize_slugs(getattr(args, "skip_datasets", None))
@@ -155,7 +162,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         opts = QueueOptions(
             log_dir=Path(args.log_dir),
             pid_dir=Path(args.pid_dir),
-            job_order=job_order,
+            job_order=job_list,
+            job_priority=job_priority,
             model_select=model_select,
             min_param_b=min_param_b,
             max_param_b=max_param_b,
@@ -171,7 +179,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_log_dir=Path(args.run_log_dir),
             completion_dir=Path(args.completion_dir),
             eval_result_dir=Path(args.eval_result_dir),
-            job_order=job_order,
+            job_order=job_list,
+            job_priority=job_priority,
             model_select=model_select,
             min_param_b=min_param_b,
             max_param_b=max_param_b,
@@ -204,7 +213,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _resolve_job_order(
+def _resolve_job_list(
     include: Sequence[str] | None,
     exclude: Sequence[str] | None,
     domains: Sequence[str] | None,
@@ -228,6 +237,17 @@ def _canonicalize_slugs(slugs: Sequence[str] | None) -> tuple[str, ...]:
     if not slugs:
         return tuple()
     return tuple(sorted({canonical_slug(slug) for slug in slugs}))
+
+
+def _resolve_job_priority(priority: Sequence[str] | None, available: Sequence[str]) -> tuple[str, ...] | None:
+    if not priority:
+        return None
+    allowed = {job for job in available}
+    ordered: list[str] = []
+    for job in priority:
+        if job in allowed and job not in ordered:
+            ordered.append(job)
+    return tuple(ordered) if ordered else None
 
 
 __all__ = ["build_parser", "main"]

@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import threading
+from queue import Queue
 from typing import Sequence
 
 
@@ -51,24 +53,80 @@ class SampleRecord:
         return payload
 
 
+@dataclass(slots=True)
+class ResumeState:
+    next_index: int
+    completed: int
+    append: bool
+
+    @property
+    def has_progress(self) -> bool:
+        return self.append
+
+
 class JsonlStageWriter:
-    def __init__(self, path: str | Path):
+    _SENTINEL = object()
+
+    def __init__(self, path: str | Path, *, resume: bool = False):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = self.path.open("w", encoding="utf-8")
+        mode = "a" if resume else "w"
+        self._fh = self.path.open(mode, encoding="utf-8")
+        self._queue: Queue[SampleRecord | object] = Queue()
+        self._closed = False
+        self._worker_exc: BaseException | None = None
+        self._worker = threading.Thread(
+            target=self._writer_loop,
+            name=f"JsonlStageWriter[{self.path.name}]",
+            daemon=True,
+        )
+        self._worker.start()
 
     def write(self, record: SampleRecord) -> None:
-        self._fh.write(json.dumps(record.as_payload(), ensure_ascii=False) + "\n")
+        self._ensure_ready()
+        self._queue.put(record)
 
     def close(self) -> None:
-        if not self._fh.closed:
-            self._fh.close()
+        if self._closed:
+            return
+        self._closed = True
+        self._queue.put(self._SENTINEL)
+        if self._worker.is_alive():
+            self._worker.join()
+        if self._worker_exc:
+            raise RuntimeError("JSONL writer thread failed") from self._worker_exc
 
     def __enter__(self) -> "JsonlStageWriter":
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
+
+    def _writer_loop(self) -> None:
+        try:
+            while True:
+                item = self._queue.get()
+                try:
+                    if item is self._SENTINEL:
+                        break
+                    payload = json.dumps(item.as_payload(), ensure_ascii=False)
+                    self._fh.write(payload + "\n")
+                    self._fh.flush()
+                finally:
+                    self._queue.task_done()
+        except BaseException as exc:
+            self._worker_exc = exc
+        finally:
+            try:
+                self._fh.close()
+            except OSError:
+                pass
+
+    def _ensure_ready(self) -> None:
+        if self._worker_exc:
+            raise RuntimeError("JSONL writer thread failed") from self._worker_exc
+        if self._closed:
+            raise RuntimeError("JSONL writer already closed")
 
 
 @dataclass(slots=True)
@@ -134,11 +192,40 @@ def _env_flag(value: str | None) -> bool:
     return lowered not in {"", "0", "false", "no", "off"}
 
 
+def detect_resume_state(path: str | Path) -> ResumeState:
+    target = Path(path)
+    if not target.exists():
+        return ResumeState(next_index=0, completed=0, append=False)
+    seen: set[int] = set()
+    try:
+        with target.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                idx = payload.get("sample_index")
+                if isinstance(idx, int) and idx >= 0:
+                    seen.add(idx)
+    except OSError:
+        return ResumeState(next_index=0, completed=0, append=False)
+
+    next_index = 0
+    while next_index in seen:
+        next_index += 1
+    return ResumeState(next_index=next_index, completed=len(seen), append=next_index > 0)
+
+
 __all__ = [
     "ProbeConfig",
     "StageRecord",
     "SampleRecord",
     "JsonlStageWriter",
+    "ResumeState",
     "DebugCaptureConfig",
     "DebugCaptureBuffer",
+    "detect_resume_state",
 ]

@@ -5,26 +5,73 @@ from __future__ import annotations
 import argparse
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Sequence
 import uuid
+
+import torch
 
 from src.eval.datasets.data_loader.multiple_choice import JsonlMultipleChoiceLoader
 from src.eval.metrics.multi_choice import evaluate_predictions, load_predictions
 from src.eval.results.layout import jsonl_path, write_scores_json
 from src.eval.scheduler.dataset_resolver import resolve_or_prepare_dataset
-from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path
+from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path, safe_slug
+from src.eval.scheduler.profiler import update_batch_cache_locked
 from src.eval.evaluators.multi_choice import MultipleChoicePipeline, COT_SAMPLING
 from src.infer.model import ModelLoadConfig
 
 
-PROBE_MAX_SAMPLES = 1
+PROBE_MIN_SAMPLES = 1
 PROBE_COT_MAX_TOKENS = 256
 
 
 def _make_probe_output_path(suffix: str = ".jsonl") -> Path:
     temp_root = Path(tempfile.gettempdir())
     return temp_root / f"rwkv_probe_{uuid.uuid4().hex}{suffix}"
+
+
+def _is_cuda_oom(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return isinstance(exc, torch.cuda.OutOfMemoryError) or "out of memory" in text
+
+
+def _extract_gpu_from_device(device: str) -> str | None:
+    if not device:
+        return None
+    if "cuda" not in device:
+        return None
+    parts = device.split(":", 1)
+    if len(parts) == 2:
+        return parts[1]
+    return None
+
+
+def _update_batch_cache(job_name: str, model_slug: str, gpu: str, batch_size: int) -> None:
+    log_root = os.environ.get("RUN_LOG_DIR")
+    if not log_root:
+        return
+    cache_path = Path(log_root).expanduser() / "batch_cache.json"
+    update_batch_cache_locked(
+        cache_path,
+        lambda data: _update_batch_cache_record(data, job_name, model_slug, gpu, batch_size),
+    )
+
+
+def _update_batch_cache_record(
+    data: dict[str, dict[str, dict[str, dict[str, object]]]],
+    job_name: str,
+    model_slug: str,
+    gpu: str,
+    batch_size: int,
+) -> dict[str, dict[str, dict[str, dict[str, object]]]]:
+    job_map = data.setdefault(job_name, {})
+    model_map = job_map.setdefault(model_slug, {})
+    record = model_map.setdefault(gpu, {})
+    record["batch"] = batch_size
+    record.pop("last_error", None)
+    record["last_probe"] = time.time()
+    return data
 
 
 def _resolve_output_path(dataset: str, model_path: str, user_path: str | None) -> Path:
@@ -79,19 +126,44 @@ def main(argv: Sequence[str] | None = None) -> int:
     cot_sampling = COT_SAMPLING
     output_path = out_path
     probe_output_path: Path | None = None
+    min_prompt_count: int | None = None
     if probe_only:
-        sample_limit = PROBE_MAX_SAMPLES
+        sample_limit = max(args.batch_size, PROBE_MIN_SAMPLES)
         cot_sampling = cot_sampling.clamp(PROBE_COT_MAX_TOKENS)
         probe_output_path = _make_probe_output_path(out_path.suffix or ".jsonl")
         output_path = probe_output_path
+        min_prompt_count = max(1, args.batch_size)
 
-    result = pipeline.run_chain_of_thought(
-        dataset_path=str(dataset_path),
-        output_path=str(output_path),
-        cot_sampling=cot_sampling,
-        batch_size=max(1, args.batch_size),
-        sample_limit=sample_limit,
-    )
+    target_batch = max(1, args.batch_size)
+    effective_batch = target_batch
+    attempt_batch = target_batch
+    while True:
+        try:
+            result = pipeline.run_chain_of_thought(
+                dataset_path=str(dataset_path),
+                output_path=str(output_path),
+                cot_sampling=cot_sampling,
+                batch_size=attempt_batch,
+                sample_limit=sample_limit,
+                min_prompt_count=min_prompt_count,
+            )
+            effective_batch = attempt_batch
+            break
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
+            if not _is_cuda_oom(exc):
+                raise
+            if probe_only or attempt_batch <= 1:
+                raise
+            fallback = max(1, attempt_batch // 2)
+            if fallback == attempt_batch:
+                raise
+            print(
+                f"⚠️  CUDA OOM at batch {attempt_batch}; retrying with {fallback}."
+            )
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            attempt_batch = fallback
+            continue
 
     if probe_only:
         print(
@@ -101,6 +173,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if probe_output_path:
             probe_output_path.unlink(missing_ok=True)
         return 0
+
+    if effective_batch != target_batch:
+        job_name = os.environ.get("RWKV_SKILLS_JOB_NAME")
+        model_slug = safe_slug(Path(args.model_path).stem)
+        gpu = _extract_gpu_from_device(args.device)
+        if job_name and model_slug and gpu:
+            _update_batch_cache(job_name, model_slug, gpu, effective_batch)
 
     preds = load_predictions(output_path)
     metrics = evaluate_predictions(preds)

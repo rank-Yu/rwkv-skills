@@ -128,6 +128,10 @@ def _build_dataset_catalogues() -> tuple[
 ) = _build_dataset_catalogues()
 
 LLM_JUDGE_DATASET_SLUGS: Final[tuple[str, ...]] = (canonical_slug("math_500_test"),)
+# judge-only 数据集不再调度到 free_response，避免 math_500 反复被 free_response 拉起
+MATH_DATASET_SLUGS_FOR_FREE_RESPONSE: Final[tuple[str, ...]] = tuple(
+    slug for slug in MATH_DATASET_SLUGS if slug not in LLM_JUDGE_DATASET_SLUGS
+)
 
 ifeval_related = [slug for slug in SPECIAL_DATASET_SLUGS if slug.startswith("ifeval")]
 if not ifeval_related:
@@ -157,7 +161,7 @@ JOB_CATALOGUE: dict[str, JobSpec] = {
     "free_response": JobSpec(
         name="free_response",
         module="src.bin.eval_free_response",
-        dataset_slugs=MATH_DATASET_SLUGS,
+        dataset_slugs=MATH_DATASET_SLUGS_FOR_FREE_RESPONSE,
         is_cot=True,
         domain="free_response",
         extra_args=("--no-param-search",),
@@ -211,6 +215,9 @@ JOB_ORDER: tuple[str, ...] = tuple(JOB_CATALOGUE.keys())
 
 def detect_job_from_dataset(dataset_slug: str, is_cot: bool) -> str | None:
     slug = canonical_slug(dataset_slug)
+    # 优先判定 LLM judge 数据集，避免 math_500 被 free_response 捕获导致调度状态错误。
+    if is_cot and slug in LLM_JUDGE_DATASET_SLUGS:
+        return "free_response_judge"
     for job_name, spec in JOB_CATALOGUE.items():
         if spec.is_cot == is_cot and slug in spec.dataset_slugs:
             return job_name

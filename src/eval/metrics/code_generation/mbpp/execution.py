@@ -22,13 +22,24 @@ def unsafe_execute(problem: Dict, completion: str, timeout: float, result):
 
         reliability_guard()
 
-        tests = problem.get("test_list") or problem.get("test_cases") or problem.get("tests") or []
-        if isinstance(tests, str):
-            tests_str = tests
-        else:
-            tests_str = "\n".join(tests)
+        test_sections: list[str] = []
+        for key in ("test_list", "test_cases", "tests", "assertion"):
+            section = problem.get(key)
+            if not section:
+                continue
+            if isinstance(section, str):
+                test_sections.append(section)
+            else:
+                test_sections.append("\n".join(section))
+        tests_str = "\n".join(test_sections)
 
-        check_program = problem["prompt"] + completion + "\n" + tests_str
+        check_program = problem["prompt"] + completion
+        if tests_str:
+            if not check_program.endswith("\n"):
+                check_program += "\n"
+            if not tests_str.endswith("\n"):
+                tests_str += "\n"
+            check_program += tests_str
 
         try:
             exec_globals: dict = {}

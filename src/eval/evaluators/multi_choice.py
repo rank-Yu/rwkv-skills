@@ -13,7 +13,7 @@ from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path
 from src.infer.engine import InferenceEngine
 from src.infer.model import ModelLoadConfig, load_rwkv_model
 from src.infer.sampling import SamplingConfig
-from .common import JsonlStageWriter, SampleRecord, StageRecord
+from .common import JsonlStageWriter, SampleRecord, StageRecord, detect_resume_state
 
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 TARGET_TOKEN_FORMAT = " <LETTER>"
@@ -112,8 +112,17 @@ class MultipleChoicePipeline:
         if prompt_template is None:
             prompt_template = templates.direct
 
-        writer = JsonlStageWriter(output_path)
-        for idx, record in enumerate(records):
+        resume = detect_resume_state(output_path)
+        start_index = min(resume.next_index, len(records))
+        if start_index and len(records):
+            remaining = max(len(records) - start_index, 0)
+            print(f"⏩ 多选 Direct 恢复运行：已完成 {start_index}/{len(records)}，剩余 {remaining}")
+        indexed_records = list(enumerate(records[start_index:], start=start_index))
+        if not indexed_records:
+            return MultipleChoicePipelineResult(dataset_name, len(records), Path(output_path))
+
+        writer = JsonlStageWriter(output_path, resume=resume.has_progress)
+        for idx, record in indexed_records:
             prompt = self._format_prompt(record, prompt_template)
             logits_map, pred_letter = self._score_prompt(record, prompt)
             stages = [
@@ -153,33 +162,43 @@ class MultipleChoicePipeline:
         batch_size: int = 64,
         dataset_name: str | None = None,
         sample_limit: int | None = None,
+        min_prompt_count: int | None = None,
     ) -> MultipleChoicePipelineResult:
         records, resolved_name = self._load_records(dataset_path, sample_limit)
         dataset_name = dataset_name or resolved_name
         templates = _select_prompt_templates(dataset_name)
+        if min_prompt_count and min_prompt_count > len(records) and records:
+            repeats = (min_prompt_count + len(records) - 1) // len(records)
+            records = (records * repeats)[:min_prompt_count]
         if cot_prompt_template is None:
             cot_prompt_template = templates.cot
         if final_answer_template is None:
             final_answer_template = templates.final
 
-        cot_prompts = [self._format_prompt(record, cot_prompt_template) for record in records]
-        if not cot_prompts:
-            return MultipleChoicePipelineResult(dataset_name, 0, Path(output_path))
+        resume = detect_resume_state(output_path)
+        start_index = min(resume.next_index, len(records))
+        if start_index and len(records):
+            remaining = max(len(records) - start_index, 0)
+            print(f"⏩ 多选 CoT 恢复运行：已完成 {start_index}/{len(records)}，剩余 {remaining}")
+        remaining_records = records[start_index:]
+        if not remaining_records:
+            return MultipleChoicePipelineResult(dataset_name, len(records), Path(output_path))
 
+        writer = JsonlStageWriter(output_path, resume=resume.has_progress)
+        prompts = [self._format_prompt(record, cot_prompt_template) for record in remaining_records]
         outputs = self.engine.generate(
-            cot_prompts,
+            prompts,
             sampling=cot_sampling,
-            batch_size=max(1, min(batch_size, len(cot_prompts))),
+            batch_size=batch_size,
             progress_desc="Generating CoT",
         )
         cot_by_idx = {item.prompt_index: item for item in outputs}
-
-        writer = JsonlStageWriter(output_path)
-        for idx, record in enumerate(records):
-            cot_seq = cot_by_idx.get(idx)
+        for local_idx, record in enumerate(remaining_records):
+            global_idx = start_index + local_idx
+            cot_seq = cot_by_idx.get(local_idx)
             if cot_seq is None:
                 continue
-            cot_prompt = cot_prompts[idx]
+            cot_prompt = prompts[local_idx]
             cot_stage = StageRecord(
                 prompt=cot_prompt,
                 output=cot_seq.text,
@@ -206,7 +225,7 @@ class MultipleChoicePipeline:
             }
             writer.write(
                 SampleRecord(
-                    index=idx,
+                    index=global_idx,
                     dataset=dataset_name,
                     stages=[cot_stage, final_stage],
                     metadata=metadata,

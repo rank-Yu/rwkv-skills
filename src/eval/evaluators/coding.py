@@ -73,53 +73,56 @@ class CodingPipeline:
         if not records:
             return CodingPipelineResult(dataset_name, 0, Path(output_path))
 
-        prompts: list[str] = []
-        meta: list[tuple[int, CodeGenerationRecord, int]] = []
+        entries: list[tuple[str, CodeGenerationRecord, int, int]] = []
         for rec_idx, record in enumerate(records):
             for sample_idx in range(samples_per_task):
-                prompts.append(_format_prompt(record.prompt))
-                meta.append((rec_idx, record, sample_idx))
+                entries.append((_format_prompt(record.prompt), record, rec_idx, sample_idx))
 
-        outputs = self.engine.generate(
-            prompts,
-            sampling=sampling,
-            batch_size=max(1, min(batch_size, len(prompts))),
-            progress_desc="Generating code",
-        )
-        output_by_idx = {item.prompt_index: item for item in outputs}
-
-        writer = JsonlStageWriter(output_path)
-        for idx, (rec_idx, record, sample_idx) in enumerate(meta):
-            seq = output_by_idx.get(idx)
-            if seq is None:
-                continue
-            # 保留模型输出的原始缩进，仅去掉末尾空白以避免无意义尾随。
-            prompt_text = prompts[idx]
-            raw_output = seq.text or ""
-            completion = raw_output.rstrip()
-            stage = StageRecord(
-                prompt=prompt_text,
-                output=raw_output,
-                finish_reason=seq.finish_reason,
+        resume = detect_resume_state(output_path)
+        start_index = min(resume.next_index, len(entries))
+        if start_index and len(entries):
+            remaining = max(len(entries) - start_index, 0)
+            print(f"⏩ HumanEval 恢复运行：已完成 {start_index}/{len(entries)}，剩余 {remaining}")
+        pending_entries = entries[start_index:]
+        if pending_entries:
+            prompts = [entry[0] for entry in pending_entries]
+            outputs = self.engine.generate(
+                prompts,
+                sampling=sampling,
+                batch_size=max(1, min(batch_size, len(prompts))),
+                progress_desc="Generating code",
             )
-            metadata = {
-                "task_id": getattr(record, "task_id", f"{dataset_name}_{rec_idx}"),
-                "sample_id": sample_idx,
-                "prompt_raw": record.prompt,
-                "entry_point": record.entry_point,
-                "canonical_solution": record.canonical_solution,
-                "test": record.metadata.get("test") if record.metadata else None,
-                "completion": completion,
-            }
-            writer.write(
-                SampleRecord(
-                    index=idx,
-                    dataset=dataset_name,
-                    stages=[stage],
-                    metadata=metadata,
+            output_by_idx = {item.prompt_index: item for item in outputs}
+            writer = JsonlStageWriter(output_path, resume=resume.has_progress)
+            for local_idx, (prompt_text, record, rec_idx, sample_idx) in enumerate(pending_entries):
+                seq = output_by_idx.get(local_idx)
+                if seq is None:
+                    continue
+                raw_output = seq.text or ""
+                completion = raw_output.rstrip()
+                stage = StageRecord(
+                    prompt=prompt_text,
+                    output=raw_output,
+                    finish_reason=seq.finish_reason,
                 )
-            )
-        writer.close()
+                metadata = {
+                    "task_id": getattr(record, "task_id", f"{dataset_name}_{rec_idx}"),
+                    "sample_id": sample_idx,
+                    "prompt_raw": record.prompt,
+                    "entry_point": record.entry_point,
+                    "canonical_solution": record.canonical_solution,
+                    "test": record.metadata.get("test") if record.metadata else None,
+                    "completion": completion,
+                }
+                writer.write(
+                    SampleRecord(
+                        index=start_index + local_idx,
+                        dataset=dataset_name,
+                        stages=[stage],
+                        metadata=metadata,
+                    )
+                )
+            writer.close()
 
         eval_results = None
         eval_details_path = None
@@ -136,7 +139,7 @@ class CodingPipeline:
 
         return CodingPipelineResult(
             dataset=dataset_name,
-            sample_count=len(prompts),
+            sample_count=len(entries),
             output_path=Path(output_path),
             eval_results=eval_results,
             eval_details_path=Path(eval_details_path) if eval_details_path else None,
@@ -159,53 +162,57 @@ class CodingPipeline:
         if not records:
             return CodingPipelineResult(dataset_name, 0, Path(output_path))
 
-        prompts: list[str] = []
-        meta: list[tuple[int, CodeGenerationRecord, int]] = []
+        entries: list[tuple[str, CodeGenerationRecord, int, int]] = []
         for rec_idx, record in enumerate(records):
             for sample_idx in range(samples_per_task):
-                prompts.append(_format_prompt(record.prompt))
-                meta.append((rec_idx, record, sample_idx))
+                entries.append((_format_prompt(record.prompt), record, rec_idx, sample_idx))
 
-        outputs = self.engine.generate(
-            prompts,
-            sampling=sampling,
-            batch_size=max(1, min(batch_size, len(prompts))),
-            progress_desc="Generating code",
-        )
-        output_by_idx = {item.prompt_index: item for item in outputs}
-
-        writer = JsonlStageWriter(output_path)
-        for idx, (rec_idx, record, sample_idx) in enumerate(meta):
-            seq = output_by_idx.get(idx)
-            if seq is None:
-                continue
-            prompt_text = prompts[idx]
-            raw_output = seq.text or ""
-            completion = raw_output.rstrip()
-            stage = StageRecord(
-                prompt=prompt_text,
-                output=raw_output,
-                finish_reason=seq.finish_reason,
+        resume = detect_resume_state(output_path)
+        start_index = min(resume.next_index, len(entries))
+        if start_index and len(entries):
+            remaining = max(len(entries) - start_index, 0)
+            print(f"⏩ MBPP 恢复运行：已完成 {start_index}/{len(entries)}，剩余 {remaining}")
+        pending_entries = entries[start_index:]
+        if pending_entries:
+            prompts = [entry[0] for entry in pending_entries]
+            outputs = self.engine.generate(
+                prompts,
+                sampling=sampling,
+                batch_size=max(1, min(batch_size, len(prompts))),
+                progress_desc="Generating code",
             )
-            metadata = {
-                "task_id": getattr(record, "task_id", f"{dataset_name}_{rec_idx}"),
-                "sample_id": sample_idx,
-                "prompt_raw": record.prompt,
-                "entry_point": record.entry_point,
-                "canonical_solution": record.canonical_solution,
-                "completion": completion,
-            }
-            if record.test_cases is not None:
-                metadata["test_cases"] = record.test_cases
-            writer.write(
-                SampleRecord(
-                    index=idx,
-                    dataset=dataset_name,
-                    stages=[stage],
-                    metadata=metadata,
+            output_by_idx = {item.prompt_index: item for item in outputs}
+            writer = JsonlStageWriter(output_path, resume=resume.has_progress)
+            for local_idx, (prompt_text, record, rec_idx, sample_idx) in enumerate(pending_entries):
+                seq = output_by_idx.get(local_idx)
+                if seq is None:
+                    continue
+                raw_output = seq.text or ""
+                completion = raw_output.rstrip()
+                stage = StageRecord(
+                    prompt=prompt_text,
+                    output=raw_output,
+                    finish_reason=seq.finish_reason,
                 )
-            )
-        writer.close()
+                metadata = {
+                    "task_id": getattr(record, "task_id", f"{dataset_name}_{rec_idx}"),
+                    "sample_id": sample_idx,
+                    "prompt_raw": record.prompt,
+                    "entry_point": record.entry_point,
+                    "canonical_solution": record.canonical_solution,
+                    "completion": completion,
+                }
+                if record.test_cases is not None:
+                    metadata["test_cases"] = record.test_cases
+                writer.write(
+                    SampleRecord(
+                        index=start_index + local_idx,
+                        dataset=dataset_name,
+                        stages=[stage],
+                        metadata=metadata,
+                    )
+                )
+            writer.close()
 
         eval_results = None
         eval_details_path = None
@@ -224,7 +231,7 @@ class CodingPipeline:
 
         return CodingPipelineResult(
             dataset=dataset_name,
-            sample_count=len(prompts),
+            sample_count=len(entries),
             output_path=Path(output_path),
             eval_results=eval_results,
             eval_details_path=Path(eval_details_path) if eval_details_path else None,

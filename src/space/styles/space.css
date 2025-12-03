@@ -1,6 +1,6 @@
 @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap");
 
-#space-app {
+.space-root {
   --space-bg: radial-gradient(circle at 20% 20%, rgba(66, 121, 255, 0.12), transparent 35%), radial-gradient(circle at 80% 0%, rgba(30, 182, 170, 0.15), transparent 30%), linear-gradient(135deg, #0a1224 0%, #0d1b2f 60%, #0b131f 100%);
   --space-panel: rgba(18, 29, 48, 0.85);
   --space-border: rgba(255, 255, 255, 0.08);
@@ -17,7 +17,7 @@
   box-sizing: border-box;
 }
 
-#space-app .space-hero {
+.space-root .space-hero {
   padding: 8px 0 16px;
   display: flex;
   align-items: center;
@@ -26,60 +26,63 @@
   flex-wrap: wrap;
 }
 
-#space-app .space-hero h1 {
+.space-root .space-hero h1 {
   font-size: 28px;
   letter-spacing: 0.5px;
   margin: 0;
-  background: var(--space-accent);
-  -webkit-background-clip: text;
-  color: transparent;
+  color: #e5f3ff; /* 直接使用高对比度文字颜色，避免在部分环境下被背景吞掉 */
+  text-shadow: 0 0 12px rgba(56, 189, 248, 0.5);
 }
 
-#space-app .space-hero .hero-subtitle {
+.space-root .space-hero .hero-subtitle {
   color: var(--space-muted);
   margin-top: 6px;
 }
 
-#space-app .space-card {
+.space-root .space-card {
   background: var(--space-panel);
   border: 1px solid var(--space-border);
   border-radius: 16px;
   padding: 14px 16px;
   box-shadow: var(--space-card-glow);
   backdrop-filter: blur(6px);
+  position: relative;
+  overflow: visible;
 }
 
-#space-app .space-controls {
+.space-root .space-controls {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 12px;
   align-items: center;
+  position: relative;
+  z-index: 3;
 }
 
-#space-app .space-controls .quick-stat {
+.space-root .space-controls .quick-stat {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-#space-app .space-controls .quick-stat .stat-label {
+.space-root .space-controls .quick-stat .stat-label {
   color: var(--space-muted);
   font-size: 13px;
 }
 
-#space-app .space-controls .quick-stat .stat-value {
+.space-root .space-controls .quick-stat .stat-value {
   font-size: 20px;
   font-weight: 600;
 }
 
-#space-app .score-grid {
+.space-root .score-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 14px;
   margin-top: 12px;
 }
 
-#space-app .score-card {
+.space-root .score-card {
   background: linear-gradient(145deg, rgba(22, 34, 53, 0.9), rgba(16, 26, 44, 0.9));
   border: 1px solid var(--space-border);
   border-radius: 18px;
@@ -90,13 +93,13 @@
   transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 
-#space-app .score-card:hover {
+.space-root .score-card:hover {
   transform: translateY(-4px);
   border-color: rgba(96, 165, 250, 0.5);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25), 0 10px 40px rgba(96, 165, 250, 0.12);
 }
 
-#space-app .score-card .card-head {
+.space-root .score-card .card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -104,13 +107,13 @@
   margin-bottom: 10px;
 }
 
-#space-app .score-card .card-head .dataset {
+.space-root .score-card .card-head .dataset {
   font-weight: 700;
   font-size: 16px;
   letter-spacing: 0.2px;
 }
 
-#space-app .score-card .badge {
+.space-root .score-card .badge {
   padding: 4px 10px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.06);
@@ -120,7 +123,7 @@
   letter-spacing: 0.4px;
 }
 
-#space-app .score-card .primary-metric {
+.space-root .score-card .primary-metric {
   font-size: 32px;
   font-weight: 700;
   margin: 4px 0 6px;
@@ -129,21 +132,21 @@
   color: transparent;
 }
 
-#space-app .score-card .metric-key {
+.space-root .score-card .metric-key {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.9px;
   color: var(--space-muted);
 }
 
-#space-app .score-card .metric-list {
+.space-root .score-card .metric-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 8px 12px;
   margin-top: 10px;
 }
 
-#space-app .score-card .metric-list .metric-line {
+.space-root .score-card .metric-list .metric-line {
   display: flex;
   justify-content: space-between;
   font-size: 13px;
@@ -151,7 +154,7 @@
   opacity: 0.9;
 }
 
-#space-app .score-card .meta {
+.space-root .score-card .meta {
   margin-top: 12px;
   font-size: 12px;
   color: var(--space-muted);
@@ -160,7 +163,7 @@
   gap: 10px;
 }
 
-#space-app .score-card .meta .dot {
+.space-root .score-card .meta .dot {
   width: 6px;
   height: 6px;
   border-radius: 999px;
@@ -169,11 +172,145 @@
   margin-right: 6px;
 }
 
-#space-app .empty-state {
+.space-root .empty-state {
   padding: 24px;
   text-align: center;
   color: var(--space-muted);
   border: 1px dashed var(--space-border);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.02);
+}
+
+.space-root .space-summary-card {
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  position: relative;
+  z-index: 1;
+}
+
+.space-root .space-summary-card ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 0;
+}
+
+.space-root .space-summary-card li {
+  position: relative;
+  padding-left: 16px;
+  margin: 2px 0;
+}
+
+.space-root .space-summary-card li::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 0.78em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--space-accent-solid);
+}
+
+.space-root .space-summary-card code {
+  background: rgba(15, 23, 42, 0.8);
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.space-root .space-table-card {
+  margin-top: 12px;
+  padding: 10px 0 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.space-root .space-table-title {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--space-muted);
+  margin: 0 14px 8px;
+}
+
+.space-root .space-table-grid {
+  margin: 0 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: rgba(15, 23, 42, 0.78);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.space-root .space-table-grid table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+}
+
+.space-root .space-table-grid col.col-model {
+  width: var(--model-col-width);
+}
+
+.space-root .space-table-grid col.col-metric {
+  width: var(--metric-col-width);
+}
+
+.space-root .space-table-grid th,
+.space-root .space-table-grid td {
+  padding: 6px 10px;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--space-text);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.4);
+  border-right: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.space-root .space-table-grid th:last-child,
+.space-root .space-table-grid td:last-child {
+  border-right: none;
+}
+
+.space-root .space-table-grid thead tr {
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.85));
+}
+
+.space-root .space-table-grid thead th {
+  font-size: 12px;
+  color: var(--space-muted);
+  text-align: center;
+  border-bottom: 1px solid rgba(59, 130, 246, 0.65);
+  letter-spacing: 0.02em;
+}
+
+.space-root .space-table-grid tbody tr:nth-child(odd) {
+  background: rgba(15, 23, 42, 0.85);
+}
+
+.space-root .space-table-grid tbody tr:nth-child(even) {
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.space-root .space-table-grid tbody tr:hover {
+  background: rgba(30, 64, 175, 0.9);
+}
+
+.space-root .space-table-grid td.cell-model {
+  font-weight: 600;
+  color: #e5f3ff;
+}
+
+.space-root .space-table-grid td:not(.cell-model) {
+  text-align: center;
+}
+
+.space-root .space-table-empty {
+  padding: 16px 10px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--space-muted);
 }

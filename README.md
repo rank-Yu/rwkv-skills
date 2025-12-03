@@ -99,3 +99,13 @@ rwkv-skills-scheduler dispatch --completion-dir results/completions --run-log-di
 - 尚未支持其他代码基准（LiveCodeBench/BigCodeBench 等）；当前代码生成仅覆盖 HumanEval 与 MBPP。
 
 欢迎根据上述缺口补全实现并更新文档。
+
+## 历史结果迁移
+若已将旧版本 `rwkv-mmlu` / `rwkv-skills` 生成的 JSON 汇总到 `results_old/`，可以通过下述命令一次性迁移到当前 `results/scores/` 布局，避免重复跑全量评测：
+
+```bash
+python -m src.bin.migrate_old_results --source results_old
+# 只想看看会写哪些文件，可加 --dry-run；已有结果但需要覆盖可加 --overwrite
+```
+
+迁移脚本会自动识别多选 / 数学自由问答 / instruction-following 等任务类型，保留科目细分指标，并在默认情况下跳过仓库里已有的 score JSON。

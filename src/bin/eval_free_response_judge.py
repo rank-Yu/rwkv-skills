@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Sequence
 import uuid
 
-from src.eval.results.layout import jsonl_path
+from src.eval.metrics.free_response import evaluate_exact, load_samples
+from src.eval.results.layout import jsonl_path, write_scores_json
 from src.eval.scheduler.dataset_resolver import resolve_or_prepare_dataset
 from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path
 from src.eval.evaluators.free_response import (
@@ -20,7 +21,7 @@ from src.eval.evaluators.free_response import (
 from src.infer.model import ModelLoadConfig
 
 
-PROBE_MAX_SAMPLES = 1
+PROBE_MIN_SAMPLES = 1
 PROBE_COT_MAX_TOKENS = 256
 PROBE_FINAL_MAX_TOKENS = 64
 
@@ -70,6 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as exc:
         print(f"❌ 数据集准备失败: {exc}")
         return 1
+    slug = infer_dataset_slug_from_path(str(dataset_path))
     out_path = _resolve_output_path(str(dataset_path), args.model_path, args.output)
     config = ModelLoadConfig(weights_path=args.model_path, device=args.device)
     pipeline = FreeResponsePipeline(config)
@@ -80,7 +82,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     output_path = out_path
     probe_output_path: Path | None = None
     if args.probe_only:
-        sample_limit = PROBE_MAX_SAMPLES
+        sample_limit = max(args.batch_size, PROBE_MIN_SAMPLES)
         cot_sampling = cot_sampling.clamp(PROBE_COT_MAX_TOKENS)
         final_sampling = final_sampling.clamp(PROBE_FINAL_MAX_TOKENS)
         probe_output_path = _make_probe_output_path(out_path.suffix or ".jsonl")
@@ -104,7 +106,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             probe_output_path.unlink(missing_ok=True)
         return 0
 
+    samples = load_samples(output_path)
+    metrics = evaluate_exact(samples)
+    score_path = write_scores_json(
+        slug,
+        is_cot=True,
+        model_name=Path(args.model_path).stem,
+        metrics={
+            "exact_accuracy": metrics.exact_accuracy,
+            "judge_accuracy": metrics.judge_accuracy,
+        },
+        samples=len(samples),
+        log_path=out_path,
+        task="free_response_judge",
+    )
     print(f"✅ judge CoT done: {result.sample_count} samples -> {result.output_path}")
+    print(f"📊 scores saved: {score_path}")
     return 0
 
 

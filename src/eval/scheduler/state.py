@@ -39,6 +39,7 @@ class CompletedRecord:
     dataset_path: str
     model_name: str
     missing_artifacts: tuple[str, ...] = ()
+    samples: int | None = None
 
 
 @dataclass
@@ -93,6 +94,15 @@ def scan_completed_jobs(log_dir: Path) -> tuple[set[CompletedKey], dict[str, Com
         job_name = detect_job_from_dataset(dataset_slug, is_cot)
         if not job_name:
             continue
+        raw_samples = raw.get("samples")
+        if isinstance(raw_samples, dict):
+            raw_samples = raw_samples.get("total")
+        try:
+            samples = int(raw_samples) if raw_samples is not None else None
+        except (TypeError, ValueError):
+            samples = None
+        if samples is not None and samples <= 0:
+            samples = None
         key = CompletedKey(
             job=job_name,
             model_slug=safe_slug(model_name),
@@ -110,6 +120,7 @@ def scan_completed_jobs(log_dir: Path) -> tuple[set[CompletedKey], dict[str, Com
             dataset_path=dataset_path,
             model_name=model_name,
             missing_artifacts=tuple(missing),
+            samples=samples,
         )
     return completed, records
 

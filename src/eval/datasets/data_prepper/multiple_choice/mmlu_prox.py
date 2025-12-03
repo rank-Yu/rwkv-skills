@@ -11,7 +11,6 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
     load_dataset = None  # type: ignore
 
 from ..data_utils import configure_hf_home, download_file, write_jsonl
-from src.eval.datasets.data_prepper.prepper_registry import MULTIPLE_CHOICE_REGISTRY
 
 LANG_LIBS_URL = (
     "https://raw.githubusercontent.com/EleutherAI/lm-evaluation-harness/"
@@ -79,14 +78,6 @@ def _iter_records(split: str, languages: list[str], cache_dir: Path) -> Iterable
             yield payload
 
 
-@MULTIPLE_CHOICE_REGISTRY.register("mmlu-prox")
-def prepare_mmlu_prox(output_root: Path, split: str = "test") -> list[Path]:
-    if split not in {"validation", "test"}:
-        raise ValueError("mmlu-prox 仅支持 validation 与 test split")
-    dataset_dir = output_root / "mmlu-prox"
-    dataset_dir.mkdir(parents=True, exist_ok=True)
-    target = dataset_dir / f"{split}.jsonl"
-    cache_dir = dataset_dir / "_cache"
-    languages = ["en", "de", "es", "fr", "it", "ja"]
-    write_jsonl(target, _iter_records(split, languages, cache_dir))
-    return [target]
+# MMLU-ProX 是多模态集，已停用以避免误触发。
+def prepare_mmlu_prox(_output_root: Path, _split: str = "test") -> list[Path]:  # pragma: no cover - disabled
+    raise RuntimeError("mmlu-prox 已被禁用，不再支持调度/准备。")

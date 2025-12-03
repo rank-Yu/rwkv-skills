@@ -21,7 +21,7 @@ from src.eval.evaluators.free_response import (
 from src.infer.model import ModelLoadConfig
 
 
-PROBE_MAX_SAMPLES = 1
+PROBE_MIN_SAMPLES = 1
 PROBE_COT_MAX_TOKENS = 256
 PROBE_FINAL_MAX_TOKENS = 64
 
@@ -82,7 +82,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     output_path = out_path
     probe_output_path: Path | None = None
     if args.probe_only:
-        sample_limit = PROBE_MAX_SAMPLES
+        sample_limit = max(args.batch_size, PROBE_MIN_SAMPLES)
         cot_sampling = cot_sampling.clamp(PROBE_COT_MAX_TOKENS)
         final_sampling = final_sampling.clamp(PROBE_FINAL_MAX_TOKENS)
         probe_output_path = _make_probe_output_path(out_path.suffix or ".jsonl")
@@ -95,6 +95,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         final_sampling=final_sampling,
         batch_size=max(1, args.batch_size),
         sample_limit=sample_limit,
+        pad_to_batch=bool(args.probe_only),
     )
 
     if args.probe_only:

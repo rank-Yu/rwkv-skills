@@ -24,6 +24,7 @@ DATA_VERSION_ORDER: Final[tuple[str, ...]] = (
     "g0a2",
     "g0a3",
     "g0a4",
+    "g0b",
     "g1",
     "g1a",
     "g1a2",

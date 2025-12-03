@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 import math
+import time
 from typing import Sequence
 
 import flashinfer
@@ -157,11 +158,16 @@ def _continuous_batching(
         total=len(prompts),
         desc=progress_desc,
         unit=" sequence",
-        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}, {postfix}]",
     )
 
     outputs: list[GenerationOutput] = []
     flashinfer_ok = True
+    start_time = time.time()
+    tokens_generated = 0
+    window_start_time = start_time
+    window_start_tokens = 0
+    throughput_ema: float | None = None
 
     while active_tasks:
         accomplished: list[int] = []
@@ -178,6 +184,7 @@ def _continuous_batching(
             if not reached_stop:
                 task.pending_tokens.append(new_token)
                 task.generated_tokens.append(new_token)
+                tokens_generated += 1
             if reached_stop or reached_length:
                 outputs.append(
                     GenerationOutput(
@@ -218,6 +225,19 @@ def _continuous_batching(
             pos_map = {old: new for new, old in enumerate(state_positions)}
             for task in active_tasks:
                 task.state_pos = pos_map[task.state_pos]
+
+        now = time.time()
+        elapsed = max(now - start_time, 1e-6)
+        window_elapsed = now - window_start_time
+        if window_elapsed >= 0.5:
+            recent_tokens = tokens_generated - window_start_tokens
+            inst_throughput = recent_tokens / max(window_elapsed, 1e-6)
+            throughput_ema = inst_throughput if throughput_ema is None else 0.9 * throughput_ema + 0.1 * inst_throughput
+            window_start_time = now
+            window_start_tokens = tokens_generated
+        inst_display = throughput_ema if throughput_ema is not None else 0.0
+        pbar.set_postfix_str(f"tok/s avg {tokens_generated / elapsed:.1f} cur {inst_display:.1f}")
+        pbar.update(0)
 
         if not active_tasks:
             break

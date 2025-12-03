@@ -21,6 +21,7 @@ class DataVersion(str, Enum):
     G0A2 = "g0a2"
     G0A3 = "g0a3"
     G0A4 = "g0a4"
+    G0B = "g0b"
     G1 = "g1"
     G1A = "g1a"
     G1A2 = "g1a2"
