@@ -12,8 +12,9 @@ from dataclasses import replace
 from src.eval.metrics.instruction_following.metrics import (
     evaluate_samples,
     load_samples_from_jsonl,
+    write_sample_results,
 )
-from src.eval.results.layout import jsonl_path, write_scores_json
+from src.eval.results.layout import eval_details_path, jsonl_path, write_scores_json
 from src.eval.scheduler.dataset_resolver import resolve_or_prepare_dataset
 from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path
 from src.eval.evaluators.instruction_following import InstructionFollowingPipeline, DEFAULT_SAMPLING
@@ -78,6 +79,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     samples = load_samples_from_jsonl(out_path)
     metrics = evaluate_samples(samples, strict=True)
+    eval_path = eval_details_path(slug, is_cot=False, model_name=Path(args.model_path).stem)
+    write_sample_results(metrics.samples, eval_path)
     score_path = write_scores_json(
         slug,
         is_cot=False,
@@ -92,9 +95,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         task_details={
             "tier0_accuracy": metrics.tier0_accuracy,
             "tier1_accuracy": metrics.tier1_accuracy,
+            "eval_details_path": str(eval_path),
         },
     )
     print(f"✅ instruction-following done: {result.sample_count} samples -> {result.output_path}")
+    print(f"📄 eval details saved: {eval_path}")
     print(f"📊 scores saved: {score_path}")
     return 0
 

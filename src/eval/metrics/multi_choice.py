@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Iterable
 
+import orjson
+
 
 @dataclass(slots=True)
 class MultipleChoicePrediction:
@@ -80,6 +82,27 @@ def evaluate_predictions(predictions: Iterable[MultipleChoicePrediction]) -> Mul
     )
 
 
+def write_prediction_details(
+    predictions: Iterable[MultipleChoicePrediction],
+    path: str | Path,
+) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("wb") as fh:
+        for pred in predictions:
+            payload = {
+                "sample_index": pred.sample_index,
+                "dataset": pred.dataset,
+                "subject": pred.subject,
+                "answer": pred.answer,
+                "predicted": pred.predicted,
+                "correct": pred.correct,
+                "logits": pred.logits,
+            }
+            fh.write(orjson.dumps(payload, option=orjson.OPT_APPEND_NEWLINE))
+    return target
+
+
 def _extract_logits(payload: dict) -> dict[str, float]:
     stage_indices = [
         int(key.removeprefix("logits"))
@@ -100,4 +123,5 @@ __all__ = [
     "MultipleChoiceMetrics",
     "load_predictions",
     "evaluate_predictions",
+    "write_prediction_details",
 ]

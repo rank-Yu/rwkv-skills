@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Iterable
 
+import orjson
+
 from . import instructions_registry
 
 
@@ -154,10 +156,32 @@ def _build_loose_variants(response: str) -> list[str]:
     return [v for v in variants if v]
 
 
+def write_sample_results(
+    results: Iterable[InstructionFollowingSampleResult],
+    path: str | Path,
+) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("wb") as fh:
+        for result in results:
+            payload = {
+                "sample_key": result.sample.key,
+                "prompt": result.sample.prompt,
+                "response": result.sample.response,
+                "instruction_ids": result.sample.instruction_ids,
+                "kwargs_list": result.sample.kwargs_list,
+                "follow_instruction_list": result.follow_instruction_list,
+                "follow_all": result.follow_all,
+            }
+            fh.write(orjson.dumps(payload, option=orjson.OPT_APPEND_NEWLINE))
+    return target
+
+
 __all__ = [
     "InstructionFollowingSample",
     "InstructionFollowingSampleResult",
     "InstructionFollowingMetrics",
     "load_samples_from_jsonl",
     "evaluate_samples",
+    "write_sample_results",
 ]

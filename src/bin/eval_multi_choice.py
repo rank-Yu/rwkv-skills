@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Sequence
 
 from src.eval.datasets.data_loader.multiple_choice import JsonlMultipleChoiceLoader
-from src.eval.metrics.multi_choice import evaluate_predictions, load_predictions
-from src.eval.results.layout import jsonl_path, write_scores_json
+from src.eval.metrics.multi_choice import evaluate_predictions, load_predictions, write_prediction_details
+from src.eval.results.layout import eval_details_path, jsonl_path, write_scores_json
 from src.eval.scheduler.dataset_resolver import resolve_or_prepare_dataset
 from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path
 from src.eval.evaluators.multi_choice import MultipleChoicePipeline
@@ -60,6 +60,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     preds = load_predictions(out_path)
     metrics = evaluate_predictions(preds)
+    eval_path = eval_details_path(slug, is_cot=False, model_name=Path(args.model_path).stem)
+    write_prediction_details(metrics.predictions, eval_path)
     score_path = write_scores_json(
         slug,
         is_cot=False,
@@ -68,9 +70,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         samples=len(preds),
         log_path=out_path,
         task="multiple_choice",
-        task_details={"accuracy_by_subject": metrics.score_by_subject},
+        task_details={
+            "accuracy_by_subject": metrics.score_by_subject,
+            "eval_details_path": str(eval_path),
+        },
     )
     print(f"✅ direct multiple-choice done: {result.sample_count} samples -> {result.output_path}")
+    print(f"📄 eval details saved: {eval_path}")
     print(f"📊 scores saved: {score_path}")
     return 0
 

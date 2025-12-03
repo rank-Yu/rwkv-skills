@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Iterable
 
+import orjson
+
 from openai import OpenAI
 
 
@@ -142,6 +144,33 @@ def evaluate_with_judge(samples: Iterable[FreeResponseSample], judge: LLMJudge) 
     return metrics
 
 
+# ---------------------------------------------------------------------------
+# Eval JSONL helpers
+# ---------------------------------------------------------------------------
+def write_sample_results(
+    results: Iterable[FreeResponseSampleResult],
+    path: str | Path,
+) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("wb") as fh:
+        for result in results:
+            sample = result.sample
+            payload = {
+                "sample_index": sample.sample_index,
+                "dataset": sample.dataset,
+                "question": sample.question,
+                "answer": sample.answer,
+                "prediction": sample.prediction,
+                "subject": sample.subject,
+                "cot": sample.cot,
+                "correct_exact": result.correct_exact,
+                "judge_correct": result.judge_correct,
+            }
+            fh.write(orjson.dumps(payload, option=orjson.OPT_APPEND_NEWLINE))
+    return target
+
+
 __all__ = [
     "FreeResponseSample",
     "FreeResponseSampleResult",
@@ -151,4 +180,5 @@ __all__ = [
     "LLMJudge",
     "LLMJudgeConfig",
     "evaluate_with_judge",
+    "write_sample_results",
 ]

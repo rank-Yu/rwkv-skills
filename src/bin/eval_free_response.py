@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Sequence
 import uuid
 
-from src.eval.metrics.free_response import evaluate_exact, load_samples
-from src.eval.results.layout import jsonl_path, write_scores_json
+from src.eval.metrics.free_response import evaluate_exact, load_samples, write_sample_results
+from src.eval.results.layout import eval_details_path, jsonl_path, write_scores_json
 from src.eval.scheduler.dataset_resolver import resolve_or_prepare_dataset
 from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path
 from src.eval.evaluators.free_response import (
@@ -109,6 +109,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     samples = load_samples(output_path)
     metrics = evaluate_exact(samples)
+    eval_path = eval_details_path(slug, is_cot=True, model_name=Path(args.model_path).stem)
+    write_sample_results(metrics.samples, eval_path)
     score_path = write_scores_json(
         slug,
         is_cot=True,
@@ -120,8 +122,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         samples=len(samples),
         log_path=out_path,
         task="free_response",
+        task_details={"eval_details_path": str(eval_path)},
     )
     print(f"✅ CoT free-form done: {result.sample_count} samples -> {result.output_path}")
+    print(f"📄 eval details saved: {eval_path}")
     print(f"📊 scores saved: {score_path}")
     return 0
 
