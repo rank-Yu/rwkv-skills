@@ -2,21 +2,23 @@ from __future__ import annotations
 
 """Gradio space to visualise evaluation scores."""
 
-import html
-import json
 import csv
+import html
 import io
+import json
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 import gradio as gr
 
-from src.eval.results.layout import SCORES_ROOT, ensure_results_structure
+from src.eval.results.layout import ensure_results_structure
 from .data import (
     ARCH_VERSIONS,
     DATA_VERSIONS,
     NUM_PARAMS,
+    SPACE_SCORES_ROOT,
     ScoreEntry,
     parse_model_signature,
     latest_entries_for_model,
@@ -244,7 +246,17 @@ def _format_metric_value(value: Any) -> str:
 
 def _primary_metric(metrics: dict[str, Any]) -> tuple[str, str] | None:
     # Prefer common accuracy keys in a stable order so judge results surface first.
-    preferred = ("judge_accuracy", "exact_accuracy", "accuracy", "prompt_accuracy", "instruction_accuracy")
+    preferred = (
+        "judge_accuracy",
+        "exact_accuracy",
+        "accuracy",
+        "prompt_accuracy",
+        "instruction_accuracy",
+        "pass@1",
+        "pass@2",
+        "pass@5",
+        "pass@10",
+    )
     for key in preferred:
         value = metrics.get(key)
         if isinstance(value, (int, float)):
@@ -277,13 +289,17 @@ def _render_summary(
 ) -> str:
     if not all_entries:
         ensure_results_structure()
-        return f"未找到任何分数文件，期待路径：`{SCORES_ROOT}`。运行评测脚本后再刷新即可。"
+        try:
+            SPACE_SCORES_ROOT.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        return f"未找到任何分数文件，期待路径：`{SPACE_SCORES_ROOT}`。运行评测脚本后再刷新即可。"
 
     benchmark_count = len(
         {(_dataset_base(entry.dataset), _method_tag(entry.cot)) for entry in visible}
     )
     lines = [
-        f"- 分数根目录：`{SCORES_ROOT}`",
+        f"- 分数根目录：`{SPACE_SCORES_ROOT}`",
         f"- 当前策略：`{selection.selected_label}`" + ("（按排序规则自动选择）" if selection.auto_selected else ""),
         f"- 已选大领域：{domain_choice}",
         f"- 模型列数：{len(selection.model_sequence)}",
@@ -569,7 +585,7 @@ def _build_dashboard() -> gr.Blocks:
 
             summary_md = gr.Markdown(summary, elem_classes="space-card space-summary-card")
             table = gr.HTML(pivot_html, elem_classes="space-card space-table-card")
-            download_btn = gr.DownloadButton("导出为 CSV", file_name="rwkv_scores.csv", elem_classes="space-export-btn")
+            download_btn = gr.DownloadButton("导出为 CSV", elem_classes="space-export-btn")
 
             def update_dashboard(selected_model: str, selected_domain: str):
                 load_errors: list[str] = []
@@ -618,7 +634,10 @@ def _build_dashboard() -> gr.Blocks:
                 selection_state = _prepare_selection(entries, selected_model, selected_domain)
                 headers, rows = _build_pivot_table(selection_state)
                 csv_text = _pivot_to_csv(headers, rows)
-                return csv_text.encode("utf-8")
+                temp_dir = Path(tempfile.mkdtemp(prefix="rwkv_space_"))
+                path = temp_dir / "rwkv_scores.csv"
+                path.write_text(csv_text, encoding="utf-8")
+                return str(path)
 
             download_btn.click(
                 export_csv,

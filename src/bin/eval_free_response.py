@@ -324,6 +324,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         cot_sampling = cot_sampling.clamp(PROBE_COT_MAX_TOKENS)
         final_sampling = final_sampling.clamp(PROBE_FINAL_MAX_TOKENS)
         probe_output_path = _make_probe_output_path(out_path.suffix or ".jsonl")
+        probe_samples = samples_per_task if args.samples_per_task > 1 else 1
         result = pipeline.run(
             dataset_path=str(dataset_path),
             output_path=str(probe_output_path),
@@ -332,7 +333,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             batch_size=batch_size,
             sample_limit=sample_limit,
             pad_to_batch=True,
-            samples_per_task=1,
+            samples_per_task=probe_samples,
         )
         print(
             "🧪 probe-only run completed: "

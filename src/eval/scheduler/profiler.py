@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping, MutableMapping, Sequence
 
 from filelock import FileLock
 
+from .auto_samples import derive_auto_samples_per_task
 from .config import DEFAULT_PYTHON, REPO_ROOT
 from .jobs import JobSpec
 
@@ -186,6 +187,8 @@ class BatchProfiler:
         model_path: Path,
         model_slug: str,
         env: dict[str, str],
+        dataset_questions: int | None = None,
+        samples_per_task_flag: str | None = None,
     ) -> int | None:
         self._refresh_cache_if_stale()
         batch_flag = job.batch_flag
@@ -193,11 +196,19 @@ class BatchProfiler:
         if not batch_flag or not probe_flag:
             return None
 
-        candidates = self.candidates
-        if not candidates:
+        base_candidates = self.candidates
+        if not base_candidates:
             return None
 
-        max_allowed_batch = max(candidates)
+        max_allowed_batch = max(base_candidates)
+        question_count = dataset_questions if dataset_questions and dataset_questions > 0 else None
+        candidates = self._select_probe_candidates(
+            base_candidates,
+            question_count=question_count,
+            sweep_enabled=bool(samples_per_task_flag),
+        )
+        if not candidates:
+            return None
 
         job_cache = self._cache.setdefault(job.name, {})
         model_cache = job_cache.setdefault(model_slug, {})
@@ -205,32 +216,61 @@ class BatchProfiler:
         cached_value = _extract_cached_batch(record)
         if cached_value is not None and cached_value > max_allowed_batch:
             cached_value = max_allowed_batch
-            model_cache[gpu] = {
+            entry = {
                 "batch": cached_value,
                 "last_probe": time.time(),
             }
+            expected_samples = self._expected_samples_per_task(
+                cached_value,
+                dataset_questions=question_count,
+                samples_per_task_flag=samples_per_task_flag,
+            )
+            if expected_samples is not None:
+                entry["samples_per_task"] = expected_samples
+            model_cache[gpu] = entry
             record = model_cache[gpu]
             self._persist_cache()
         record_is_dict = isinstance(record, Mapping)
         last_probe = record.get("last_probe") if record_is_dict else None
         last_error = record.get("last_error") if record_is_dict else None
+        cached_samples_per_task = None
+        if record_is_dict:
+            sample_field = record.get("samples_per_task")
+            if isinstance(sample_field, (int, float)):
+                cached_samples_per_task = int(sample_field)
         cache_is_trustworthy = (
             cached_value is not None and cached_value > 0 and isinstance(last_probe, (int, float)) and (not last_error)
         )
+        if cache_is_trustworthy and samples_per_task_flag:
+            expected_samples = self._expected_samples_per_task(
+                cached_value,
+                dataset_questions=question_count,
+                samples_per_task_flag=samples_per_task_flag,
+            )
+            if expected_samples is None or cached_samples_per_task != expected_samples:
+                cache_is_trustworthy = False
         if cache_is_trustworthy:
             print(f"🔁 Using cached batch size {cached_value} for {job_id} on cuda:{gpu}.")
             return cached_value
 
         if job.probe_dataset_required and not dataset_path:
-            fallback = min(candidates)
+            fallback = min(base_candidates)
             print(
                 f"⚠️  Dataset path is required but missing for {job_id}; falling back to batch size {fallback}."
             )
-            model_cache[gpu] = {
+            entry = {
                 "batch": fallback,
                 "last_error": "dataset path unavailable",
                 "last_probe": time.time(),
             }
+            expected_samples = self._expected_samples_per_task(
+                fallback,
+                dataset_questions=question_count,
+                samples_per_task_flag=samples_per_task_flag,
+            )
+            if expected_samples is not None:
+                entry["samples_per_task"] = expected_samples
+            model_cache[gpu] = entry
             self._persist_cache()
             return fallback
 
@@ -253,10 +293,14 @@ class BatchProfiler:
                     str(candidate),
                 ]
             )
-            if probe_flag:
-                command.append(probe_flag)
-                if probe_flag in {"--max-samples", "--max-tokens"}:
-                    command.append("1")
+            derived_samples = None
+            expected_samples_value = None
+            if samples_per_task_flag:
+                derived_samples = derive_auto_samples_per_task(candidate, question_count)
+                expected_samples_value = derived_samples if derived_samples is not None else 1
+                if derived_samples is not None:
+                    command.extend([samples_per_task_flag, str(expected_samples_value)])
+
             if dataset_path is not None:
                 command.extend(["--dataset", str(dataset_path)])
             if job.probe_max_generate_flag:
@@ -281,10 +325,15 @@ class BatchProfiler:
             combined_lower = f"{stdout}\n{stderr}".lower()
 
             if proc.returncode == 0:
-                model_cache[gpu] = {
+                entry = {
                     "batch": candidate,
                     "last_probe": time.time(),
                 }
+                if samples_per_task_flag:
+                    if expected_samples_value is None:
+                        expected_samples_value = 1
+                    entry["samples_per_task"] = expected_samples_value
+                model_cache[gpu] = entry
                 self._persist_cache()
                 print(f"✅ Batch size {candidate} works for {job_id} on cuda:{gpu} (probe {elapsed:.1f}s).")
                 return candidate
@@ -330,6 +379,65 @@ class BatchProfiler:
         entry["last_probe"] = time.time()
         model_cache[gpu] = entry
         self._persist_cache()
+
+    def _select_probe_candidates(
+        self,
+        candidates: Sequence[int],
+        *,
+        question_count: int | None,
+        sweep_enabled: bool,
+    ) -> tuple[int, ...]:
+        ordered = [value for value in candidates if isinstance(value, int) and value > 0]
+        if not ordered:
+            return tuple()
+        if sweep_enabled:
+            return tuple(ordered)
+        if question_count is None or question_count <= 0:
+            return tuple(ordered)
+        max_candidate = max(ordered)
+        if question_count >= max_candidate:
+            return tuple(ordered)
+        start = max(1, int(question_count))
+        seen: set[int] = set()
+        sequence: list[int] = []
+
+        def _add(value: int | None) -> None:
+            if value is None or value <= 0 or value in seen:
+                return
+            sequence.append(value)
+            seen.add(value)
+
+        _add(start)
+        threshold = start
+        fallback = self._previous_power_of_two(start)
+        if fallback is not None:
+            _add(fallback)
+            threshold = fallback
+        for candidate in ordered:
+            if candidate < threshold:
+                _add(candidate)
+        return tuple(sequence)
+
+    @staticmethod
+    def _previous_power_of_two(value: int) -> int | None:
+        if value <= 1:
+            return None
+        bits = (value - 1).bit_length() - 1
+        if bits < 0:
+            return None
+        return 1 << bits
+
+    def _expected_samples_per_task(
+        self,
+        batch_size: int | None,
+        *,
+        dataset_questions: int | None,
+        samples_per_task_flag: str | None,
+    ) -> int | None:
+        if batch_size is None or not samples_per_task_flag:
+            return None
+        derived = derive_auto_samples_per_task(batch_size, dataset_questions)
+        return derived if derived is not None else 1
 
 
 __all__ = ["BatchProfiler", "load_batch_cache", "save_batch_cache", "update_batch_cache_locked"]

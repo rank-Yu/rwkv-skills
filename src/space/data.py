@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,6 +18,171 @@ from src.eval.scheduler.jobs import detect_job_from_dataset
 ARCH_VERSIONS = ("rwkv7", "rwkv7a", "rwkv7b")
 DATA_VERSIONS = ("g0", "g0a", "g0a2", "g0a3", "g0a4", "g0b", "g1", "g1a", "g1a2", "g1a3", "g1a4", "g1b")
 NUM_PARAMS = ("0_1b", "0_4b", "1_5b", "2_9b", "7_2b", "13_3b")
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _expand_path(value: str | Path | None) -> Path | None:
+    if not value:
+        return None
+    return Path(value).expanduser()
+
+
+def _score_root_candidates() -> list[Path]:
+    override = _expand_path(os.environ.get("RWKV_SKILLS_SPACE_SCORES_ROOT"))
+    if override:
+        return [override]
+
+    candidates: list[Path] = []
+    seen: set[str] = set()
+
+    def _push(path: Path | None) -> None:
+        if path is None:
+            return
+        candidate = Path(path).expanduser()
+        key = str(candidate)
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(candidate)
+
+    run_log_dir = _expand_path(os.environ.get("RUN_LOG_DIR"))
+    _push(run_log_dir)
+
+    run_results_dir = _expand_path(os.environ.get("RUN_RESULTS_DIR"))
+    if run_results_dir:
+        _push(run_results_dir / "scores")
+
+    results_root = _expand_path(os.environ.get("RWKV_SKILLS_RESULTS_ROOT"))
+    if results_root:
+        _push(results_root / "results" / "scores")
+        _push(results_root / "scores")
+        _push(results_root)
+
+    bundle = _REPO_ROOT / "rwkv-skills-results"
+    _push(bundle / "results" / "scores")
+    _push(bundle / "scores")
+    _push(bundle)
+
+    _push(SCORES_ROOT)
+    return candidates
+
+
+def _has_score_files(path: Path) -> bool:
+    try:
+        if not path.is_dir():
+            return False
+        next(path.rglob("*.json"))
+        return True
+    except StopIteration:
+        return False
+    except OSError:
+        return False
+
+
+def _resolve_scores_root() -> Path:
+    candidates = _score_root_candidates()
+    for path in candidates:
+        if _has_score_files(path):
+            return path
+    for path in candidates:
+        try:
+            if path.exists():
+                return path
+        except OSError:
+            continue
+    return candidates[-1] if candidates else SCORES_ROOT
+
+
+SPACE_SCORES_ROOT = _resolve_scores_root()
+
+
+def _canonical_pass_key(key: str) -> str | None:
+    token = key.strip().lower().replace("@", "").replace("_", "").replace("-", "").replace(" ", "")
+    if not token.startswith("pass"):
+        return None
+    suffix = token[len("pass") :]
+    if suffix.startswith("at"):
+        suffix = suffix[2:]
+    if suffix.isdigit():
+        return f"pass@{int(suffix)}"
+    return None
+
+
+def _numeric(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    if isinstance(value, dict):
+        for key in ("value", "score", "accuracy"):
+            nested = value.get(key)
+            if isinstance(nested, (int, float, str)) and not isinstance(nested, bool):
+                parsed = _numeric(nested)
+                if parsed is not None:
+                    return parsed
+    return None
+
+
+def _collect_pass_metrics(source: Any) -> dict[str, float]:
+    """Extract pass@k style metrics from loosely structured payloads."""
+
+    collected: dict[str, float] = {}
+    if source is None or isinstance(source, bool):
+        return collected
+    if isinstance(source, (int, float)):
+        collected["pass@1"] = float(source)
+        return collected
+    if not isinstance(source, dict):
+        return collected
+
+    for key, value in source.items():
+        canonical = _canonical_pass_key(str(key))
+        number = _numeric(value)
+        if canonical and number is not None:
+            collected[canonical] = number
+            continue
+        if str(key).lower() == "score" and number is not None:
+            # Older dumps sometimes used ``score`` as the primary field.
+            collected.setdefault("pass@1", number)
+            continue
+        if isinstance(value, dict):
+            nested = _collect_pass_metrics(value)
+            for nested_key, nested_value in nested.items():
+                collected.setdefault(nested_key, nested_value)
+    return collected
+
+
+def _normalize_metrics(payload: dict[str, Any], *, dataset: str, is_cot: bool, task: str | None) -> dict[str, Any]:
+    raw_metrics = payload.get("metrics") if isinstance(payload, dict) else None
+    metrics: dict[str, Any] = {}
+    if isinstance(raw_metrics, dict):
+        for key, value in raw_metrics.items():
+            canonical = _canonical_pass_key(str(key))
+            if canonical:
+                parsed = _numeric(value)
+                metrics[canonical] = parsed if parsed is not None else value
+            else:
+                metrics[key] = value
+
+    job_name = detect_job_from_dataset(dataset, is_cot=is_cot)
+    slug = canonical_slug(dataset)
+    normalized_slug = "".join(ch for ch in slug if ch.isalnum()).lower()
+    code_like = job_name in {"code_human_eval", "code_mbpp"} or (task and task.startswith("code")) or (
+        "humaneval" in normalized_slug or "mbpp" in normalized_slug
+    )
+    if not code_like:
+        return metrics
+
+    # Pull pass@k style fields from legacy shapes such as ``score`` / nested dicts.
+    for source in (raw_metrics, payload.get("score"), payload.get("scores"), payload):
+        for key, value in _collect_pass_metrics(source).items():
+            metrics.setdefault(key, value)
+    return metrics
 
 
 @dataclass(slots=True, frozen=True)
@@ -119,7 +285,7 @@ def _infer_domain(dataset_slug: str, *, is_cot: bool, task: str | None) -> str:
     return "其他"
 
 
-def load_scores(scores_root: str | Path = SCORES_ROOT, errors: list[str] | None = None) -> list[ScoreEntry]:
+def load_scores(scores_root: str | Path = SPACE_SCORES_ROOT, errors: list[str] | None = None) -> list[ScoreEntry]:
     root = Path(scores_root)
     if not root.exists():
         return []
@@ -144,10 +310,9 @@ def load_scores(scores_root: str | Path = SCORES_ROOT, errors: list[str] | None 
         if not dataset or not model:
             continue
 
-        metrics = payload.get("metrics") or {}
-        if not isinstance(metrics, dict):
-            metrics = {}
-
+        is_cot = bool(payload.get("cot", False))
+        task = str(payload.get("task")).strip() if payload.get("task") else None
+        metrics = _normalize_metrics(payload, dataset=dataset, is_cot=is_cot, task=task)
         created_at = _parse_created_at(payload.get("created_at"), path)
         raw_samples = payload.get("samples")
         try:
@@ -173,8 +338,6 @@ def load_scores(scores_root: str | Path = SCORES_ROOT, errors: list[str] | None 
                 problems = None
         log_path = str(payload.get("log_path") or "")
         task_details = payload.get("task_details") if isinstance(payload.get("task_details"), dict) else None
-        task = str(payload.get("task")).strip() if payload.get("task") else None
-        is_cot = bool(payload.get("cot", False))
         domain = _infer_domain(dataset, is_cot=is_cot, task=task)
 
         sig = parse_model_signature(model)
@@ -267,4 +430,5 @@ __all__ = [
     "pick_latest_model",
     "latest_entries_for_model",
     "parse_model_signature",
+    "SPACE_SCORES_ROOT",
 ]

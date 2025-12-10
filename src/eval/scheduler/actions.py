@@ -2,7 +2,6 @@ from __future__ import annotations
 
 """User-facing actions backed by the scheduler library."""
 
-import math
 import os
 import re
 import sys
@@ -12,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from .auto_samples import derive_auto_samples_per_task
 from .config import (
     DEFAULT_COMPLETION_DIR,
     DEFAULT_DISPATCH_POLL_SECONDS,
@@ -87,35 +87,6 @@ class LogsOptions:
     pid_dir: Path
     tail_lines: int = 60
     rotate_seconds: int = 15
-
-
-_DEFAULT_AUTO_SAMPLES_CAP = 256
-
-
-def _compute_auto_samples_cap() -> int:
-    raw = os.environ.get("RUN_AUTO_SAMPLES_PER_TASK_MAX")
-    if raw is None or not raw.strip():
-        return _DEFAULT_AUTO_SAMPLES_CAP
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        print(
-            f"⚠️  RUN_AUTO_SAMPLES_PER_TASK_MAX={raw!r} 无法解析，已回退到 {_DEFAULT_AUTO_SAMPLES_CAP}",
-        )
-        return _DEFAULT_AUTO_SAMPLES_CAP
-    return max(1, value)
-
-
-_AUTO_SAMPLES_CAP = _compute_auto_samples_cap()
-
-
-def _derive_auto_samples_per_task(batch_size: int | None, questions: int | None) -> int | None:
-    if batch_size is None or not questions or questions <= 0:
-        return None
-    desired = math.ceil(batch_size / questions)
-    if desired <= 1:
-        return None
-    return min(desired, _AUTO_SAMPLES_CAP)
 
 
 def _purge_previous_outputs(completion_path: Path, score_path: Path, eval_path: Path) -> None:
@@ -381,13 +352,14 @@ def action_dispatch(opts: DispatchOptions) -> None:
                     "RWKV_SKILLS_DATASET": str(dataset_path),
                     "RWKV_SKILLS_DATASET_SLUG": dataset_slug,
                     "RWKV_SKILLS_LOG_PATH": str(completion_path),
-                    "RWKV_SKILLS_DISABLE_PARAM_SEARCH": "1",
                     "RUN_LOG_DIR": str(opts.log_dir),
                     "RUN_COMPLETION_DIR": str(opts.completion_dir),
                     "RUN_EVAL_RESULT_DIR": str(opts.eval_result_dir),
                     "RUN_RUN_LOG_DIR": str(opts.run_log_dir),
                 }
             )
+
+            questions = question_counts.get(dataset_slug)
 
             batch_size = batch_profiler.determine_batch_size(
                 job=job,
@@ -397,12 +369,13 @@ def action_dispatch(opts: DispatchOptions) -> None:
                 model_path=item.model_path,
                 model_slug=item.model_slug,
                 env=env,
+                dataset_questions=questions,
+                samples_per_task_flag=job.samples_per_task_flag,
             )
 
-            questions = question_counts.get(dataset_slug)
             samples_override = None
             if job.samples_per_task_flag:
-                samples_override = _derive_auto_samples_per_task(batch_size, questions)
+                samples_override = derive_auto_samples_per_task(batch_size, questions)
 
             command = build_command(
                 job,

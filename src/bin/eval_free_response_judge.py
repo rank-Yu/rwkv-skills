@@ -123,7 +123,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         final_sampling = final_sampling.clamp(PROBE_FINAL_MAX_TOKENS)
         probe_output_path = _make_probe_output_path(out_path.suffix or ".jsonl")
         output_path = probe_output_path
-        samples_per_task = 1
+        if args.samples_per_task <= 1:
+            samples_per_task = 1
 
     result = pipeline.run(
         dataset_path=str(dataset_path),
