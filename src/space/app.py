@@ -544,12 +544,12 @@ def _cell_metric_value(entry: ScoreEntry | None, *, dataset_base: str) -> str:
     if base in MATH500_BASES:
         formatted = _format_specific("avg@4")
         if formatted is not None:
-            return formatted
+            return f"avg@4 {formatted}"
 
     if base.startswith("ifeval"):
         formatted = _format_specific("avg@4")
         if formatted is not None:
-            return formatted
+            return f"avg@4 {formatted}"
 
     primary = _primary_metric(entry.metrics)
     if not primary:
