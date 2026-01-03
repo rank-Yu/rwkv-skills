@@ -378,6 +378,7 @@ def action_dispatch(opts: DispatchOptions) -> None:
                 f"cuda:{gpu}",
                 batch_size=batch_size,
                 output_path=completion_path,
+                extra_args=item.extra_args,
             )
             print(f"🚀 Launch {item.job_id} -> cuda:{gpu}")
             print(f"    Dataset: {dataset_path}")
@@ -435,6 +436,7 @@ def build_command(
     *,
     batch_size: int | None = None,
     output_path: Path | None = None,
+    extra_args: Sequence[str] = (),
 ) -> list[str]:
     base = [DEFAULT_PYTHON, "-m", job.module]
     args = [
@@ -451,6 +453,8 @@ def build_command(
         args.extend(["--output", str(output_path)])
     if job.extra_args:
         args.extend(job.extra_args)
+    if extra_args:
+        args.extend(extra_args)
     return base + args
 
 

@@ -7,8 +7,8 @@ from typing import Collection, Sequence
 
 
 DATASET_SLUG_ALIASES: dict[str, str] = {
-    "math500_test": "math_500_test",
     "math500": "math_500_test",
+    "math": "hendrycks_math_test",
     "input_data": "ifeval_test",
     "ceval_exam_test": "ceval_test",
     "mbpp": "mbpp_test",
@@ -47,7 +47,7 @@ def safe_slug(text: str) -> str:
 
 
 def canonical_slug(text: str) -> str:
-    slug = safe_slug(text)
+    slug = safe_slug(text).lower()
     return DATASET_SLUG_ALIASES.get(slug, slug)
 
 
