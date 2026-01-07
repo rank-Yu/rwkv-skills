@@ -9,14 +9,14 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
 
-from ..eval.evaluators.free_response import (
+from src.eval.evaluators.free_response import (
     DEFAULT_COT_SAMPLING,
     DEFAULT_FINAL_SAMPLING,
     FreeResponsePipeline,
 )
-from ..eval.metrics.free_response import compute_avg_at_k, compute_pass_at_k, evaluate_free_response
-from ..eval.param_search.cot_grid import grid_size_by_mode, iter_cot_sampling_grid, NORMAL_COT_GRID, SIMPLE_COT_GRID
-from ..eval.results.layout import (
+from src.eval.metrics.free_response import compute_avg_at_k, compute_pass_at_k, evaluate_free_response
+from src.eval.param_search.cot_grid import grid_size_by_mode, iter_cot_sampling_grid, NORMAL_COT_GRID, SIMPLE_COT_GRID
+from src.eval.results.layout import (
     PARAM_SEARCH_COMPLETIONS_ROOT,
     PARAM_SEARCH_EVAL_RESULTS_ROOT,
     PARAM_SEARCH_SCORES_ROOT,
@@ -26,10 +26,10 @@ from ..eval.results.layout import (
     param_search_scores_trial_path,
     write_scores_json_to_path,
 )
-from ..eval.scheduler.dataset_resolver import resolve_or_prepare_dataset
-from ..eval.scheduler.dataset_utils import canonical_slug, infer_dataset_slug_from_path, safe_slug
-from ..infer.model import ModelLoadConfig
-from ..infer.sampling import SamplingConfig
+from src.eval.scheduler.dataset_resolver import resolve_or_prepare_dataset
+from src.eval.scheduler.dataset_utils import canonical_slug, infer_dataset_slug_from_path, safe_slug
+from src.infer.model import ModelLoadConfig
+from src.infer.sampling import SamplingConfig
 
 
 DEFAULT_PASS_K = (1,)
