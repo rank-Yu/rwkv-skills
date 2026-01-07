@@ -9,14 +9,14 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
 
-from src.eval.evaluators.free_response import (
+from ..eval.evaluators.free_response import (
     DEFAULT_COT_SAMPLING,
     DEFAULT_FINAL_SAMPLING,
     FreeResponsePipeline,
 )
-from src.eval.metrics.free_response import compute_avg_at_k, compute_pass_at_k, evaluate_free_response
-from src.eval.param_search.cot_grid import grid_size_by_mode, iter_cot_sampling_grid
-from src.eval.results.layout import (
+from ..eval.metrics.free_response import compute_avg_at_k, compute_pass_at_k, evaluate_free_response
+from ..eval.param_search.cot_grid import grid_size_by_mode, iter_cot_sampling_grid, NORMAL_COT_GRID, SIMPLE_COT_GRID
+from ..eval.results.layout import (
     PARAM_SEARCH_COMPLETIONS_ROOT,
     PARAM_SEARCH_EVAL_RESULTS_ROOT,
     PARAM_SEARCH_SCORES_ROOT,
@@ -26,10 +26,10 @@ from src.eval.results.layout import (
     param_search_scores_trial_path,
     write_scores_json_to_path,
 )
-from src.eval.scheduler.dataset_resolver import resolve_or_prepare_dataset
-from src.eval.scheduler.dataset_utils import canonical_slug, infer_dataset_slug_from_path, safe_slug
-from src.infer.model import ModelLoadConfig
-from src.infer.sampling import SamplingConfig
+from ..eval.scheduler.dataset_resolver import resolve_or_prepare_dataset
+from ..eval.scheduler.dataset_utils import canonical_slug, infer_dataset_slug_from_path, safe_slug
+from ..infer.model import ModelLoadConfig
+from ..infer.sampling import SamplingConfig
 
 
 DEFAULT_PASS_K = (1,)
@@ -86,6 +86,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cot-max-tokens", type=int, help="Clamp CoT generation length")
     parser.add_argument("--final-max-tokens", type=int, help="Clamp final answer generation length")
     parser.add_argument("--output", help="Ignored (scheduler compatibility)")
+    parser.add_argument("--para-grid-normal", default=None, type=str, 
+                        help="""Grid search parameter space as a dictionary: \n
+                         e.g. \'{\"temperature\":[0.3,0.4],\"top_k\":[50],\"top_p\":[0.3,0.4],\"alpha_presence\":[0.0,0.1],\"alpha_frequency\":[0.1],\"alpha_decay\":[0.99]}\'
+                         """)
+    parser.add_argument("--para-grid-simple", default=None, type=str, 
+                        help="""Grid search parameter space as a dictionary: \n
+                         e.g. \'{\"temperature\":[0.3,0.4],\"noise\":[1.0, 2.0, 3.0]}\'
+                         """)
     parser.add_argument(
         "--probe-only",
         action="store_true",
@@ -111,6 +119,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     return parser.parse_args(argv)
 
+def _check_para_grid(args):
+    if args.scan_mode in ['normal', 'both']:
+        if args.para_grid_normal is None: 
+            raise ValueError("When scan_mode is 'normal' or 'both', --para-grid-normal must be provided.")
+        else: 
+            args.para_grid_normal = json.loads(args.para_grid_normal)
+    if args.scan_mode in ['simple', 'both']:
+        if args.para_grid_simple is None: raise ValueError("When scan_mode is 'simple' or 'both', --para-grid-simple must be provided.")
+        else: args.para_grid_simple = json.loads(args.para_grid_simple)
+
+    # Set default as a placeholder if not provided
+    if args.para_grid_normal is None: args.para_grid_normal = NORMAL_COT_GRID
+    if args.para_grid_simple is None: args.para_grid_simple = SIMPLE_COT_GRID
+    return args
 
 def _cleanup_previous_trials(model_name: str, dataset_slug: str) -> None:
     model_dir = safe_slug(model_name)
@@ -122,6 +144,7 @@ def _cleanup_previous_trials(model_name: str, dataset_slug: str) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    args = _check_para_grid(args)
     try:
         dataset_path = resolve_or_prepare_dataset(args.dataset, verbose=False)
     except FileNotFoundError as exc:
@@ -159,7 +182,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     _cleanup_previous_trials(model_name, slug)
-    sizes = grid_size_by_mode()
+    sizes = grid_size_by_mode(args.para_grid_normal, args.para_grid_simple)
     if args.scan_mode == "both":
         total = sizes["normal"] + sizes["simple"]
         print(f"🔍 Param-search grid: normal={sizes['normal']} + simple={sizes['simple']} (total={total})")
@@ -171,7 +194,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     best_score: float | None = None
     best_trial: int | None = None
 
-    for trial_idx, trial_cot, params in iter_cot_sampling_grid(cot_sampling, scan_mode=args.scan_mode):
+    for trial_idx, trial_cot, params in iter_cot_sampling_grid(cot_sampling, 
+                                                               NORMAL_COT_GRID=args.para_grid_normal, 
+                                                               SIMPLE_COT_GRID=args.para_grid_simple, 
+                                                               scan_mode=args.scan_mode):
         completion_path = param_search_completion_trial_path(slug, model_name=model_name, trial_index=trial_idx)
         eval_path = param_search_eval_trial_path(slug, model_name=model_name, trial_index=trial_idx)
         score_path = param_search_scores_trial_path(slug, model_name=model_name, trial_index=trial_idx)

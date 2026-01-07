@@ -21,7 +21,7 @@ SIMPLE_COT_GRID: dict[str, tuple[float, ...]] = {
 }
 
 
-def grid_size_by_mode() -> dict[str, int]:
+def grid_size_by_mode(NORMAL_COT_GRID, SIMPLE_COT_GRID) -> dict[str, int]:    
     normal = (
         len(NORMAL_COT_GRID["temperature"])
         * len(NORMAL_COT_GRID["top_p"])
@@ -33,8 +33,8 @@ def grid_size_by_mode() -> dict[str, int]:
     return {"normal": normal, "simple": simple}
 
 
-def total_grid_size() -> int:
-    sizes = grid_size_by_mode()
+def total_grid_size(NORMAL_COT_GRID, SIMPLE_COT_GRID) -> int:
+    sizes = grid_size_by_mode(NORMAL_COT_GRID, SIMPLE_COT_GRID)
     return int(sizes["normal"]) + int(sizes["simple"])
 
 
@@ -50,6 +50,8 @@ def grid_size(scan_mode: str = "both") -> int:
 
 def iter_cot_sampling_grid(
     base: SamplingConfig,
+    NORMAL_COT_GRID,
+    SIMPLE_COT_GRID,
     *,
     scan_mode: str = "both",
 ) -> Iterable[tuple[int, SamplingConfig, dict[str, object]]]:
