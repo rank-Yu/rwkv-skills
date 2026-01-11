@@ -67,6 +67,7 @@ class DispatchOptions(QueueOptions):
     clean_param_swap: bool = False
     batch_cache_path: Path | None = None
     overwrite: bool = False
+    disable_checker: bool = False
 
 
 @dataclass(slots=True)
@@ -375,6 +376,8 @@ def action_dispatch(opts: DispatchOptions) -> None:
                     "RUN_RUN_LOG_DIR": str(opts.run_log_dir),
                 }
             )
+            if opts.disable_checker:
+                env["RWKV_SKILLS_DISABLE_CHECKER"] = "1"
 
             questions = question_counts.get(dataset_slug)
 
