@@ -1,0 +1,5 @@
+[cot]
+template = "free_response_cot_default"
+
+[final]
+template = "free_response_final_default"

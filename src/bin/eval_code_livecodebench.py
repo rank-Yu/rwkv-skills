@@ -8,8 +8,9 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
 
+from src.eval.benchmark_config import resolve_sampling_config
 from src.eval.checkers.llm_checker import run_llm_checker
-from src.eval.evaluators.coding import CodingPipeline, LCB_COT_SAMPLING, LCB_FINAL_SAMPLING
+from src.eval.evaluators.coding import CodingPipeline
 from src.eval.metrics.code_generation.livecodebench import evaluate_livecodebench_dataset
 from src.eval.results.layout import eval_details_path, jsonl_path, write_scores_json
 from src.eval.scheduler.dataset_resolver import resolve_or_prepare_dataset
@@ -64,9 +65,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     slug = infer_dataset_slug_from_path(str(dataset_path))
     out_path = _resolve_output_path(str(dataset_path), args.model_path, args.output)
-
-    cot_sampling = LCB_COT_SAMPLING
-    final_sampling = LCB_FINAL_SAMPLING
+    model_name = Path(args.model_path).stem
+    cot_sampling = resolve_sampling_config(
+        slug,
+        model_name,
+        stage="cot",
+        fallback_templates="full_code_cot_default",
+    )
+    final_sampling = resolve_sampling_config(
+        slug,
+        model_name,
+        stage="final",
+        fallback_templates="full_code_final_default",
+    )
+    if cot_sampling is None or final_sampling is None:
+        raise ValueError(f"缺少采样配置: {slug} ({model_name})")
     if args.max_tokens:
         cot_sampling = cot_sampling.clamp(args.max_tokens)
         final_sampling = final_sampling.clamp(args.max_tokens)

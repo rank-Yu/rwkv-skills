@@ -12,6 +12,7 @@ from src.eval.metrics.free_response import (
     compute_avg_at_k,
     evaluate_free_response,
 )
+from src.eval.benchmark_config import resolve_sampling_config
 from src.eval.checkers.llm_checker import run_llm_checker
 from src.eval.results.layout import (
     eval_details_path,
@@ -20,13 +21,8 @@ from src.eval.results.layout import (
 )
 from src.eval.scheduler.dataset_resolver import resolve_or_prepare_dataset
 from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path, canonical_slug
-from src.eval.evaluators.free_response import (
-    FreeResponsePipeline,
-    DEFAULT_COT_SAMPLING,
-    DEFAULT_FINAL_SAMPLING,
-)
+from src.eval.evaluators.free_response import FreeResponsePipeline
 from src.infer.model import ModelLoadConfig
-from src.infer.sampling import SamplingConfig
 
 
 # Free-response 默认只算 pass@1；高难数学集单独放宽
@@ -53,19 +49,6 @@ HARD_MATH_AVG_K_OVERRIDES = {
     "aime24_test": AIME_AVG_K,
     "aime25_test": AIME_AVG_K,
 }
-
-# Math benchmarks默认使用的 sampling 参数
-MATH_DEFAULT_COT_SAMPLING = SamplingConfig(
-    max_generate_tokens=4096,
-    temperature=0.55,
-    top_k=66,
-    top_p=0.79,
-    alpha_presence=0.14,
-    alpha_frequency=0.01,
-    alpha_decay=0.997,
-    pad_zero=True,
-)
-
 
 def _resolve_output_path(dataset: str, model_path: str, user_path: str | None) -> Path:
     if user_path:
@@ -171,7 +154,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     slug = infer_dataset_slug_from_path(str(dataset_path))
     output_path = _resolve_output_path(str(dataset_path), args.model_path, args.output)
-
     config = ModelLoadConfig(weights_path=args.model_path, device=args.device)
     pipeline = FreeResponsePipeline(config)
 
@@ -180,10 +162,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     report_pass_k = _report_pass_k(slug, pass_k)
     report_avg_k = _report_avg_k(slug, avg_k)
 
-    lower_slug = canonical_slug(slug)
-    base_cot_sampling = MATH_DEFAULT_COT_SAMPLING if lower_slug in HARD_MATH_PASS_K_SLUGS else DEFAULT_COT_SAMPLING
-    cot_sampling = base_cot_sampling.clamp(args.cot_max_tokens)
-    final_sampling = DEFAULT_FINAL_SAMPLING.clamp(args.final_max_tokens)
+    model_name = Path(args.model_path).stem
+    cot_sampling = resolve_sampling_config(
+        slug,
+        model_name,
+        stage="cot",
+        fallback_templates="free_response_cot_default",
+    )
+    final_sampling = resolve_sampling_config(
+        slug,
+        model_name,
+        stage="final",
+        fallback_templates="free_response_final_default",
+    )
+    if cot_sampling is None or final_sampling is None:
+        raise ValueError(f"缺少采样配置: {slug} ({model_name})")
+    cot_sampling = cot_sampling.clamp(args.cot_max_tokens)
+    final_sampling = final_sampling.clamp(args.final_max_tokens)
 
     batch_size = max(1, args.batch_size)
 

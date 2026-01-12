@@ -14,6 +14,7 @@ from src.eval.metrics.free_response import (
     compute_avg_at_k,
     evaluate_free_response,
 )
+from src.eval.benchmark_config import resolve_sampling_config
 from src.eval.checkers.llm_checker import run_llm_checker
 from src.eval.results.layout import (
     eval_details_path,
@@ -22,11 +23,7 @@ from src.eval.results.layout import (
 )
 from src.eval.scheduler.dataset_resolver import resolve_or_prepare_dataset
 from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path, canonical_slug
-from src.eval.evaluators.free_response import (
-    FreeResponsePipeline,
-    DEFAULT_COT_SAMPLING,
-    DEFAULT_FINAL_SAMPLING,
-)
+from src.eval.evaluators.free_response import FreeResponsePipeline
 from src.infer.model import ModelLoadConfig
 
 
@@ -185,8 +182,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     report_pass_k = _report_pass_k(slug, pass_k_final)
     report_avg_k = _report_avg_k(slug, avg_k_final)
 
-    cot_sampling = DEFAULT_COT_SAMPLING.clamp(args.cot_max_tokens)
-    final_sampling = DEFAULT_FINAL_SAMPLING.clamp(args.final_max_tokens)
+    model_name = Path(args.model_path).stem
+    cot_sampling = resolve_sampling_config(
+        slug,
+        model_name,
+        stage="cot",
+        fallback_templates="free_response_cot_default",
+    )
+    final_sampling = resolve_sampling_config(
+        slug,
+        model_name,
+        stage="final",
+        fallback_templates="free_response_final_default",
+    )
+    if cot_sampling is None or final_sampling is None:
+        raise ValueError(f"缺少采样配置: {slug} ({model_name})")
+    cot_sampling = cot_sampling.clamp(args.cot_max_tokens)
+    final_sampling = final_sampling.clamp(args.final_max_tokens)
     sample_limit: int | None = args.max_samples
     output_path = out_path
     generate_pass_k = (1,) if args.probe_only else pass_k_final

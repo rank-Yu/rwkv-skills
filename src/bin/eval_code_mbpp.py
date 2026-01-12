@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Sequence
 from dataclasses import replace
 
+from src.eval.benchmark_config import resolve_sampling_config
 from src.eval.results.layout import eval_details_path, jsonl_path, write_scores_json
 from src.eval.scheduler.dataset_resolver import resolve_or_prepare_dataset
 from src.eval.scheduler.dataset_utils import infer_dataset_slug_from_path
-from src.eval.evaluators.coding import CodingPipeline, MBPP_EVAL_CODE_SAMPLING
+from src.eval.evaluators.coding import CodingPipeline
 from src.eval.metrics.code_generation.evaluate import evaluate_mbpp_dataset
 from src.eval.checkers.llm_checker import run_llm_checker
 from src.infer.model import ModelLoadConfig
@@ -64,8 +65,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     slug = infer_dataset_slug_from_path(str(dataset_path))
     out_path = _resolve_output_path(str(dataset_path), args.model_path, args.output)
-
-    sampling = MBPP_EVAL_CODE_SAMPLING
+    sampling = resolve_sampling_config(
+        slug,
+        Path(args.model_path).stem,
+        fallback_templates="code_default",
+    )
+    if sampling is None:
+        raise ValueError(f"缺少采样配置: {slug} ({Path(args.model_path).stem})")
     if args.max_tokens:
         sampling = sampling.clamp(args.max_tokens)
     if args.temperature is not None:

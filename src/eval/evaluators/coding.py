@@ -15,54 +15,6 @@ from src.infer.model import ModelLoadConfig, load_rwkv_model
 from src.infer.sampling import SamplingConfig
 from .common import JsonlStageWriter, SampleRecord, StageRecord, detect_resume_state, ensure_resume_samples_compatible
 
-HUMAN_EVAL_CODE_SAMPLING = SamplingConfig(
-    max_generate_tokens=1024,
-    temperature=0.6,
-    top_k=50,
-    top_p=0.6,
-    alpha_presence=0.25,
-    alpha_frequency=0.25,
-    alpha_decay=0.996,
-    stop_tokens=(0, 261, 6884, 21214, 24281),
-    pad_zero=True,
-)
-
-MBPP_EVAL_CODE_SAMPLING = SamplingConfig(
-    max_generate_tokens=1024,
-    temperature=0.6,
-    top_k=50,
-    top_p=0.6,
-    alpha_presence=0.25,
-    alpha_frequency=0.25,
-    alpha_decay=0.996,
-    stop_tokens=(0, 261, 6884, 21214, 24281),
-    pad_zero=True,
-)
-
-LCB_COT_SAMPLING = SamplingConfig(
-    max_generate_tokens=8192,
-    temperature=0.6,
-    top_k=50,
-    top_p=0.6,
-    alpha_presence=0.25,
-    alpha_frequency=0.25,
-    alpha_decay=0.996,
-    stop_tokens=(0,),
-    pad_zero=True,
-)
-
-LCB_FINAL_SAMPLING = SamplingConfig(
-    max_generate_tokens=8192,
-    temperature=0.6,
-    top_k=50,
-    top_p=0.6,
-    alpha_presence=0.25,
-    alpha_frequency=0.25,
-    alpha_decay=0.996,
-    stop_tokens=(6884, 21214),
-    pad_zero=True,
-)
-
 # Coding 默认只计算 pass@1；如需更高 k，请通过 CLI 传入
 DEFAULT_PASS_K = (1,)
 
@@ -148,7 +100,7 @@ class CodingPipeline:
         dataset_path: str,
         output_path: str,
         *,
-        sampling: SamplingConfig = HUMAN_EVAL_CODE_SAMPLING,
+        sampling: SamplingConfig,
         batch_size: int = 64,
         sample_limit: int | None = None,
         eval_timeout: float = 3.0,
@@ -250,7 +202,7 @@ class CodingPipeline:
         dataset_path: str,
         output_path: str,
         *,
-        sampling: SamplingConfig = MBPP_EVAL_CODE_SAMPLING,
+        sampling: SamplingConfig,
         batch_size: int = 64,
         sample_limit: int | None = None,
         eval_timeout: float = 3.0,
@@ -352,8 +304,8 @@ class CodingPipeline:
         dataset_path: str,
         output_path: str,
         *,
-        cot_sampling: SamplingConfig = LCB_COT_SAMPLING,
-        final_sampling: SamplingConfig = LCB_FINAL_SAMPLING,
+        cot_sampling: SamplingConfig,
+        final_sampling: SamplingConfig,
         batch_size: int = 64,
         sample_limit: int | None = None,
         eval_timeout: float = 3.0,
@@ -505,8 +457,4 @@ class CodingPipeline:
 __all__ = [
     "CodingPipeline",
     "CodingPipelineResult",
-    "HUMAN_EVAL_CODE_SAMPLING",
-    "MBPP_EVAL_CODE_SAMPLING",
-    "LCB_COT_SAMPLING",
-    "LCB_FINAL_SAMPLING",
 ]
